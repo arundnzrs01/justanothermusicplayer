@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:torrent_music/app.dart';
@@ -16,8 +17,14 @@ Future<void> main() async {
   await container.read(appSettingsProvider.notifier).load();
   final settings = container.read(appSettingsProvider);
   final dirService = DownloadDirectoryService();
-  await dirService.ensurePermissions();
-  await dirService.resolvePath(settings.downloadDirectoryPath);
+  try {
+    await dirService.ensurePermissions(
+      forPath: settings.downloadDirectoryPath,
+    );
+    await dirService.resolvePath(settings.downloadDirectoryPath);
+  } catch (e, st) {
+    debugPrint('Startup download path setup failed: $e\n$st');
+  }
   final trackerManager = container.read(trackerManagerProvider);
   await trackerManager.load();
   await trackerManager.maybeAutoRefresh(enabled: settings.autoUpdateTrackersDaily);

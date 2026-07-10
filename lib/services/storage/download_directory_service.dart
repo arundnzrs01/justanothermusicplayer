@@ -14,6 +14,18 @@ final downloadDirectoryServiceProvider = Provider<DownloadDirectoryService>((ref
 
 /// Resolves and manages the user-configurable download folder.
 class DownloadDirectoryService {
+  /// Paths on shared storage that need MANAGE_EXTERNAL_STORAGE on Android 11+.
+  bool isPublicStoragePath(String path) {
+    final normalized = path.toLowerCase();
+    return normalized.startsWith('/storage/') ||
+        normalized.startsWith('/sdcard/') ||
+        normalized.contains('/emulated/0/');
+  }
+
+  bool isAppScopedPath(String path) {
+    return path.contains('/Android/data/') || path.contains('/Android/media/');
+  }
+
   Future<String> defaultPath() async {
     if (Platform.isAndroid) {
       final ext = await getExternalStorageDirectory();
@@ -35,56 +47,99 @@ class DownloadDirectoryService {
     return '${docs.path}/$kDefaultDownloadFolderName';
   }
 
-  Future<bool> ensurePermissions() async {
+  Future<bool> ensurePermissions({String? forPath}) async {
     if (!Platform.isAndroid) return true;
 
+    final target = forPath ?? await defaultPath();
+    if (!isPublicStoragePath(target) || isAppScopedPath(target)) {
+      return true;
+    }
+
+    return _ensurePublicStorageAccess();
+  }
+
+  Future<bool> _ensurePublicStorageAccess() async {
+    var status = await Permission.manageExternalStorage.status;
+    if (status.isGranted) return true;
+
+    status = await Permission.manageExternalStorage.request();
+    if (status.isGranted) return true;
+
+    // Legacy fallbacks for older Android versions.
     final storage = await Permission.storage.request();
     if (storage.isGranted) return true;
 
-    if (await Permission.manageExternalStorage.isGranted) return true;
-
-    final audio = await Permission.audio.request();
-    if (audio.isGranted) return true;
-
-    return storage.isGranted;
+    return false;
   }
 
-  Future<String> resolvePath(String? configured) async {
-    await ensurePermissions();
-    var path = (configured != null && configured.isNotEmpty)
-        ? configured
-        : await defaultPath();
+  /// Verifies the directory exists and accepts writes (required before libtorrent).
+  Future<bool> canWriteTo(String dirPath) async {
     try {
-      await _createDir(path);
-      return path;
-    } catch (_) {
-      final ext = await getExternalStorageDirectory();
-      final fallback = ext != null
-          ? '${ext.path}/$kDefaultDownloadFolderName'
-          : '${(await getApplicationDocumentsDirectory()).path}/$kDefaultDownloadFolderName';
-      await _createDir(fallback);
-      return fallback;
+      final dir = Directory(dirPath);
+      await dir.create(recursive: true);
+      final testFile = File('${dir.path}/.jamp_write_test');
+      await testFile.writeAsString('ok', flush: true);
+      final contents = await testFile.readAsString();
+      await testFile.delete();
+      return contents == 'ok';
+    } catch (e, st) {
+      debugPrint('canWriteTo failed for $dirPath: $e\n$st');
+      return false;
     }
   }
 
+  /// Picks the first writable directory from configured path and safe fallbacks.
+  Future<String> resolvePath(String? configured) async {
+    final candidates = <String>[];
+    if (configured != null && configured.trim().isNotEmpty) {
+      candidates.add(configured.trim());
+    }
+    candidates.add(await defaultPath());
+    final docs = await getApplicationDocumentsDirectory();
+    candidates.add('${docs.path}/$kDefaultDownloadFolderName');
+
+    final seen = <String>{};
+    for (final path in candidates) {
+      if (!seen.add(path)) continue;
+
+      if (isPublicStoragePath(path) && !isAppScopedPath(path)) {
+        final allowed = await ensurePermissions(forPath: path);
+        if (!allowed) {
+          debugPrint('Skipping public path without storage permission: $path');
+          continue;
+        }
+      }
+
+      if (await canWriteTo(path)) {
+        if (path != configured) {
+          debugPrint('Using writable download path: $path');
+        }
+        return path;
+      }
+    }
+
+    throw StateError('No writable download directory available');
+  }
+
+  /// True when [resolved] differs from what the user configured (migration needed).
+  bool didMigrate(String? configured, String resolved) {
+    if (configured == null || configured.trim().isEmpty) return false;
+    return configured.trim() != resolved;
+  }
+
   Future<String?> pickDirectory() async {
+    if (Platform.isAndroid) {
+      await _ensurePublicStorageAccess();
+    }
+
     final picked = await FilePicker.platform.getDirectoryPath(
       dialogTitle: 'Choose download folder',
     );
     if (picked == null || picked.isEmpty) return null;
-    await _createDir(picked);
-    return picked;
-  }
 
-  Future<void> _createDir(String path) async {
-    try {
-      final dir = Directory(path);
-      if (!await dir.exists()) {
-        await dir.create(recursive: true);
-      }
-    } catch (e, st) {
-      debugPrint('Failed to create download dir $path: $e\n$st');
-      rethrow;
+    if (!await canWriteTo(picked)) {
+      throw StateError('Selected folder is not writable');
     }
+    return picked;
   }
 }

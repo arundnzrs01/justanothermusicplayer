@@ -87,8 +87,7 @@ class DownloadManager {
     _emit();
 
     try {
-      await _directoryService.ensurePermissions();
-      final dir = await _directoryService.resolvePath(_settings.downloadDirectoryPath);
+      final dir = await _resolveAndPrepareDownloadDir();
       await _engine.initialize(downloadDir: dir);
       await _trackerManager.load();
 
@@ -118,6 +117,18 @@ class DownloadManager {
     }
 
     unawaited(_refreshTrackersInBackground());
+  }
+
+  Future<String> _resolveAndPrepareDownloadDir() async {
+    final configured = _settings.downloadDirectoryPath;
+    final dir = await _directoryService.resolvePath(configured);
+    if (_directoryService.didMigrate(configured, dir)) {
+      debugPrint('Migrated download folder to writable path: $dir');
+      _settings = _settings.copyWith(clearDownloadDirectory: true);
+      await _database.setSetting('download_directory_path', '');
+    }
+    await _engine.setDownloadDirectory(dir);
+    return dir;
   }
 
   Future<void> _refreshTrackersInBackground() async {
@@ -180,16 +191,20 @@ class DownloadManager {
     if (!canStart) return true;
 
     try {
+      await _resolveAndPrepareDownloadDir();
       await _engine.addMagnet(enhancedMagnet, id: id);
       _update(id, item.copyWith(status: DownloadStatus.downloading));
       return true;
     } catch (e, st) {
       debugPrint('addMagnet failed: $e\n$st');
+      final message = e is StateError
+          ? 'Download folder is not writable — check Settings → Storage'
+          : 'Failed to start download';
       _update(
         id,
         item.copyWith(
           status: DownloadStatus.failed,
-          errorMessage: 'Failed to start download',
+          errorMessage: message,
         ),
       );
       return false;
@@ -230,6 +245,7 @@ class DownloadManager {
 
     if (!canStart) return;
 
+    await _resolveAndPrepareDownloadDir();
     await _engine.addTorrentFile(path, id: id);
     _update(id, item.copyWith(status: DownloadStatus.downloading));
   }
@@ -330,24 +346,29 @@ class DownloadManager {
 
   Future<void> _applyDownloadDirectoryFromSettings() async {
     try {
-      final dir = await _directoryService.resolvePath(_settings.downloadDirectoryPath);
-      await _engine.setDownloadDirectory(dir);
+      await _resolveAndPrepareDownloadDir();
     } catch (e, st) {
       debugPrint('Failed to apply download directory: $e\n$st');
     }
   }
 
   Future<String> resolveDownloadDirectory() async {
-    return _directoryService.resolvePath(_settings.downloadDirectoryPath);
+    return _resolveAndPrepareDownloadDir();
   }
 
   Future<void> setDownloadDirectory(String path) async {
-    await _directoryService.ensurePermissions();
+    await _directoryService.ensurePermissions(forPath: path);
+    if (!await _directoryService.canWriteTo(path)) {
+      throw StateError('Selected folder is not writable');
+    }
     await _engine.setDownloadDirectory(path);
   }
 
   Future<void> resetDownloadDirectory() async {
     final path = await _directoryService.defaultPath();
+    if (!await _directoryService.canWriteTo(path)) {
+      throw StateError('Default download folder is not writable');
+    }
     await _engine.setDownloadDirectory(path);
   }
 

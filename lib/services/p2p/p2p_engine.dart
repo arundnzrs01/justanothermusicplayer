@@ -37,15 +37,32 @@ class P2pEngine {
   String? get downloadDir => _downloadDir;
 
   Future<void> setDownloadDirectory(String path) async {
+    if (!await _verifyWritable(path)) {
+      throw StateError('Download directory is not writable: $path');
+    }
     _downloadDir = path;
-    await Directory(path).create(recursive: true);
+  }
+
+  Future<bool> _verifyWritable(String path) async {
+    try {
+      final dir = Directory(path);
+      await dir.create(recursive: true);
+      final test = File('${dir.path}/.jamp_write_test');
+      await test.writeAsString('ok', flush: true);
+      await test.delete();
+      return true;
+    } catch (e, st) {
+      debugPrint('Path not writable $path: $e\n$st');
+      return false;
+    }
   }
 
   Future<void> initialize({String? downloadDir}) async {
     if (_initialized) {
       if (downloadDir != null && downloadDir != _downloadDir) {
-        _downloadDir = downloadDir;
-        await Directory(_downloadDir!).create(recursive: true);
+        if (await _verifyWritable(downloadDir)) {
+          _downloadDir = downloadDir;
+        }
       }
       return;
     }
@@ -55,7 +72,11 @@ class P2pEngine {
       final docs = await getApplicationDocumentsDirectory();
       _downloadDir = '${docs.path}/Downloads';
     }
-    await Directory(_downloadDir!).create(recursive: true);
+    if (!await _verifyWritable(_downloadDir!)) {
+      final docs = await getApplicationDocumentsDirectory();
+      _downloadDir = '${docs.path}/Downloads';
+      await _verifyWritable(_downloadDir!);
+    }
 
     try {
       await LibtorrentFlutter.init(
@@ -64,7 +85,10 @@ class P2pEngine {
         pollInterval: const Duration(milliseconds: 500),
       );
       _engine = LibtorrentFlutter.instance;
-      _updatesSub = _engine!.torrentUpdates.listen(_onTorrentUpdates);
+      _updatesSub = _engine!.torrentUpdates.listen(
+        _onTorrentUpdates,
+        onError: (e, st) => debugPrint('torrentUpdates stream error: $e\n$st'),
+      );
       _useNative = true;
       debugPrint('P2pEngine: libtorrent initialized');
     } catch (e, st) {
@@ -78,8 +102,14 @@ class P2pEngine {
   Future<void> addMagnet(String magnet, {required String id}) async {
     await initialize();
     if (_useNative && _engine != null) {
+      if (_downloadDir == null || !await _verifyWritable(_downloadDir!)) {
+        throw StateError('Download directory is not writable');
+      }
       final savePath = '$_downloadDir/$id';
       await Directory(savePath).create(recursive: true);
+      if (!await _verifyWritable(savePath)) {
+        throw StateError('Cannot write to torrent save path');
+      }
       try {
         final torrentId = _engine!.addMagnet(magnet, savePath);
         if (torrentId < 0) {
@@ -192,14 +222,10 @@ class P2pEngine {
         if (appId == null) continue;
 
         final info = entry.value;
-        if (info.hasMetadata &&
-            _engine != null &&
-            !_audioPrioritized.contains(entry.key)) {
-          try {
-            prioritizeAudioFiles(_engine!, entry.key);
-          } catch (e, st) {
-            debugPrint('prioritizeAudioFiles failed: $e\n$st');
-          }
+
+        // Skip native file prioritization — setFilePriorities can crash libtorrent
+        // on some devices when metadata first arrives and writing begins.
+        if (info.hasMetadata) {
           _audioPrioritized.add(entry.key);
         }
 

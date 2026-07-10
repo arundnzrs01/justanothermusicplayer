@@ -240,7 +240,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ListTile(
             leading: Icon(Icons.restore, color: theme.accent),
             title: const Text('Reset download folder'),
-            subtitle: const Text('Use default JAMP folder on device storage'),
+            subtitle: const Text('App folder (no extra permissions needed)'),
             onTap: () => _resetDownloadFolder(context),
           ),
           const Divider(),
@@ -344,29 +344,43 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Future<void> _pickDownloadFolder(BuildContext context) async {
     final service = ref.read(downloadDirectoryServiceProvider);
-    await service.ensurePermissions();
-    final picked = await service.pickDirectory();
-    if (picked == null) return;
-    await ref.read(appSettingsProvider.notifier).setDownloadDirectory(picked);
-    await ref.read(downloadManagerProvider).setDownloadDirectory(picked);
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Downloads will save to $picked')),
-    );
-    setState(() {});
+    try {
+      await service.ensurePermissions();
+      final picked = await service.pickDirectory();
+      if (picked == null) return;
+      await ref.read(appSettingsProvider.notifier).setDownloadDirectory(picked);
+      await ref.read(downloadManagerProvider).setDownloadDirectory(picked);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Downloads will save to $picked')),
+      );
+      setState(() {});
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not use that folder — check storage permission')),
+      );
+    }
   }
 
   Future<void> _resetDownloadFolder(BuildContext context) async {
     final service = ref.read(downloadDirectoryServiceProvider);
-    await service.ensurePermissions();
-    final path = await service.defaultPath();
-    await ref.read(appSettingsProvider.notifier).setDownloadDirectory(path);
-    await ref.read(downloadManagerProvider).setDownloadDirectory(path);
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Reset to $path')),
-    );
-    setState(() {});
+    try {
+      await service.ensurePermissions();
+      final path = await service.defaultPath();
+      await ref.read(appSettingsProvider.notifier).setDownloadDirectory(path);
+      await ref.read(downloadManagerProvider).setDownloadDirectory(path);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Reset to $path')),
+      );
+      setState(() {});
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not reset download folder')),
+      );
+    }
   }
 
   Future<void> _openTrackerEditor(BuildContext context) async {
