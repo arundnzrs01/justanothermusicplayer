@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:torrent_music/core/providers/app_settings_provider.dart';
@@ -8,10 +10,29 @@ import 'package:torrent_music/services/connectivity_service.dart';
 import 'package:torrent_music/services/p2p/download_manager.dart';
 import 'package:torrent_music/services/p2p/tracker_list_config.dart';
 import 'package:torrent_music/services/p2p/tracker_manager.dart';
+import 'package:torrent_music/shared/widgets/empty_state.dart';
 
-final downloadsProvider = StreamProvider<List<DownloadItem>>((ref) {
-  return ref.watch(downloadManagerProvider).downloads;
-});
+class DownloadsListNotifier extends Notifier<List<DownloadItem>> {
+  StreamSubscription<List<DownloadItem>>? _sub;
+
+  @override
+  List<DownloadItem> build() {
+    final manager = ref.watch(downloadManagerProvider);
+    _sub?.cancel();
+    state = manager.currentItems;
+    _sub = manager.downloads.listen(
+      (items) => state = items,
+      onError: (e, st) => debugPrint('downloads stream error: $e\n$st'),
+    );
+    ref.onDispose(() => _sub?.cancel());
+    return manager.currentItems;
+  }
+}
+
+final downloadsProvider =
+    NotifierProvider<DownloadsListNotifier, List<DownloadItem>>(
+  DownloadsListNotifier.new,
+);
 
 class DownloadsScreen extends ConsumerWidget {
   const DownloadsScreen({super.key});
@@ -19,7 +40,7 @@ class DownloadsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = context.appTheme;
-    final downloadsAsync = ref.watch(downloadsProvider);
+    final items = ref.watch(downloadsProvider);
     final manager = ref.watch(downloadManagerProvider);
     final settings = ref.watch(appSettingsProvider);
     final wifiAsync = ref.watch(isOnWifiProvider);
@@ -66,37 +87,42 @@ class DownloadsScreen extends ConsumerWidget {
             ),
           ],
         ),
-        body: downloadsAsync.when(
-          data: (items) => TabBarView(
-            children: [
-              _DownloadList(
-                items: items
-                    .where((d) =>
-                        d.status == DownloadStatus.downloading ||
-                        d.status == DownloadStatus.queued ||
-                        d.status == DownloadStatus.paused)
-                    .toList(),
-                manager: manager,
-                ref: ref,
-              ),
-              _DownloadList(
-                items: items
-                    .where((d) => d.status == DownloadStatus.completed)
-                    .toList(),
-                manager: manager,
-                ref: ref,
-              ),
-              _DownloadList(
-                items: items
-                    .where((d) => d.status == DownloadStatus.failed)
-                    .toList(),
-                manager: manager,
-                ref: ref,
-              ),
-            ],
-          ),
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (e, _) => Center(child: Text('Error: $e')),
+        body: TabBarView(
+          children: [
+            _DownloadList(
+              items: items
+                  .where((d) =>
+                      d.status == DownloadStatus.downloading ||
+                      d.status == DownloadStatus.queued ||
+                      d.status == DownloadStatus.paused)
+                  .toList(),
+              manager: manager,
+              ref: ref,
+              emptyTitle: 'No active downloads',
+              emptySubtitle: 'Search in Discover or paste a magnet link to start',
+              emptyIcon: Icons.download_outlined,
+            ),
+            _DownloadList(
+              items: items
+                  .where((d) => d.status == DownloadStatus.completed)
+                  .toList(),
+              manager: manager,
+              ref: ref,
+              emptyTitle: 'No completed downloads',
+              emptySubtitle: 'Finished downloads will appear here',
+              emptyIcon: Icons.check_circle_outline,
+            ),
+            _DownloadList(
+              items: items
+                  .where((d) => d.status == DownloadStatus.failed)
+                  .toList(),
+              manager: manager,
+              ref: ref,
+              emptyTitle: 'No failed downloads',
+              emptySubtitle: 'Downloads that could not finish will appear here',
+              emptyIcon: Icons.error_outline,
+            ),
+          ],
         ),
       ),
     );
@@ -126,19 +152,28 @@ class _DownloadList extends ConsumerWidget {
     required this.items,
     required this.manager,
     required this.ref,
+    required this.emptyTitle,
+    required this.emptySubtitle,
+    required this.emptyIcon,
   });
 
   final List<DownloadItem> items;
   final DownloadManager manager;
   final WidgetRef ref;
+  final String emptyTitle;
+  final String emptySubtitle;
+  final IconData emptyIcon;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = context.appTheme;
 
     if (items.isEmpty) {
-      return Center(
-        child: Text('Nothing here yet', style: TextStyle(color: theme.onBackgroundMuted)),
+      return EmptyState(
+        theme: theme,
+        icon: emptyIcon,
+        title: emptyTitle,
+        subtitle: emptySubtitle,
       );
     }
 

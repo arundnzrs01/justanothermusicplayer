@@ -20,6 +20,7 @@ void prioritizeAudioFiles(LibtorrentFlutter engine, int torrentId) {
   final files = engine.getFiles(torrentId);
   if (files.isEmpty) return;
   final priorities = files.map((f) => isAudioFileName(f.name) ? 7 : 0).toList();
+  if (priorities.isEmpty) return;
   engine.setFilePriorities(torrentId, priorities);
 }
 

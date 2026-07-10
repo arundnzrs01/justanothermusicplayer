@@ -9,6 +9,7 @@ import 'package:torrent_music/services/p2p/torrent_utils.dart';
 
 final p2pEngineProvider = Provider<P2pEngine>((ref) {
   final engine = P2pEngine();
+  ref.keepAlive();
   ref.onDispose(() => engine.dispose());
   return engine;
 });
@@ -171,7 +172,7 @@ class P2pEngine {
       return;
     }
     for (final id in _simulated.keys) {
-      _progressController.add(
+      _emitProgress(
         P2pProgressEvent(
           id: id,
           progress: _simulated[id]?.progress ?? 0,
@@ -186,36 +187,54 @@ class P2pEngine {
 
   void _onTorrentUpdates(Map<int, TorrentInfo> torrents) {
     for (final entry in torrents.entries) {
-      final appId = _torrentToApp[entry.key];
-      if (appId == null) continue;
+      try {
+        final appId = _torrentToApp[entry.key];
+        if (appId == null) continue;
 
-      final info = entry.value;
-      if (info.hasMetadata &&
-          _engine != null &&
-          !_audioPrioritized.contains(entry.key)) {
-        prioritizeAudioFiles(_engine!, entry.key);
-        _audioPrioritized.add(entry.key);
+        final info = entry.value;
+        if (info.hasMetadata &&
+            _engine != null &&
+            !_audioPrioritized.contains(entry.key)) {
+          try {
+            prioritizeAudioFiles(_engine!, entry.key);
+          } catch (e, st) {
+            debugPrint('prioritizeAudioFiles failed: $e\n$st');
+          }
+          _audioPrioritized.add(entry.key);
+        }
+
+        final completed = isTorrentComplete(info);
+        List<FileInfo> files = const [];
+        if (completed && info.hasMetadata && _engine != null) {
+          try {
+            files = _engine!.getFiles(entry.key);
+          } catch (e, st) {
+            debugPrint('getFiles failed: $e\n$st');
+          }
+        }
+
+        _emitProgress(
+          P2pProgressEvent(
+            id: appId,
+            progress: info.progress.clamp(0.0, 1.0),
+            downloadBps: info.downloadRate,
+            uploadBps: info.uploadRate,
+            numSeeds: info.numSeeds,
+            numPeers: info.numPeers,
+            isCompleted: completed,
+            savePath: completed ? musicImportPath(info, files) : info.savePath,
+            displayName: info.name.isNotEmpty ? info.name : null,
+          ),
+        );
+      } catch (e, st) {
+        debugPrint('Torrent update failed: $e\n$st');
       }
-
-      final files = info.hasMetadata && _engine != null
-          ? _engine!.getFiles(entry.key)
-          : <FileInfo>[];
-      final completed = isTorrentComplete(info);
-
-      _progressController.add(
-        P2pProgressEvent(
-          id: appId,
-          progress: info.progress.clamp(0.0, 1.0),
-          downloadBps: info.downloadRate,
-          uploadBps: info.uploadRate,
-          numSeeds: info.numSeeds,
-          numPeers: info.numPeers,
-          isCompleted: completed,
-          savePath: completed ? musicImportPath(info, files) : info.savePath,
-          displayName: info.name.isNotEmpty ? info.name : null,
-        ),
-      );
     }
+  }
+
+  void _emitProgress(P2pProgressEvent event) {
+    if (_progressController.isClosed) return;
+    _progressController.add(event);
   }
 
   void _startSimulatedDownload(
@@ -229,7 +248,7 @@ class P2pEngine {
       progress += 0.03;
       if (progress >= 1) {
         timer.cancel();
-        _progressController.add(
+        _emitProgress(
           P2pProgressEvent(
             id: id,
             progress: 1,
@@ -245,7 +264,7 @@ class P2pEngine {
       }
       _simulated[id] =
           _ActiveDownload(source: source, progress: progress, timer: timer);
-      _progressController.add(
+      _emitProgress(
         P2pProgressEvent(
           id: id,
           progress: progress,

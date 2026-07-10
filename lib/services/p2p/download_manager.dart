@@ -17,16 +17,21 @@ import 'package:uuid/uuid.dart';
 
 final downloadManagerProvider = Provider<DownloadManager>((ref) {
   final manager = DownloadManager(
-    engine: ref.watch(p2pEngineProvider),
-    trackerManager: ref.watch(trackerManagerProvider),
-    database: ref.watch(databaseProvider),
-    scanner: ref.watch(libraryScannerProvider),
-    connectivity: ref.watch(connectivityServiceProvider),
-    settings: ref.watch(appSettingsProvider),
-    directoryService: ref.watch(downloadDirectoryServiceProvider),
-    onSettingsChanged: () => ref.read(appSettingsProvider.notifier).load(),
+    engine: ref.read(p2pEngineProvider),
+    trackerManager: ref.read(trackerManagerProvider),
+    database: ref.read(databaseProvider),
+    scanner: ref.read(libraryScannerProvider),
+    connectivity: ref.read(connectivityServiceProvider),
+    settings: ref.read(appSettingsProvider),
+    directoryService: ref.read(downloadDirectoryServiceProvider),
   );
+
+  ref.listen(appSettingsProvider, (previous, next) {
+    manager.updateSettings(next);
+  });
+
   ref.onDispose(manager.dispose);
+  ref.keepAlive();
   return manager;
 });
 
@@ -39,15 +44,13 @@ class DownloadManager {
     required ConnectivityService connectivity,
     required AppSettings settings,
     required DownloadDirectoryService directoryService,
-    required Future<void> Function() onSettingsChanged,
   })  : _engine = engine,
         _trackerManager = trackerManager,
         _database = database,
         _scanner = scanner,
         _connectivity = connectivity,
         _settings = settings,
-        _directoryService = directoryService,
-        _onSettingsChanged = onSettingsChanged {
+        _directoryService = directoryService {
     _emit();
     _init();
   }
@@ -59,17 +62,19 @@ class DownloadManager {
   final ConnectivityService _connectivity;
   AppSettings _settings;
   final DownloadDirectoryService _directoryService;
-  final Future<void> Function() _onSettingsChanged;
 
   final _uuid = const Uuid();
-  final _controller = StreamController<List<DownloadItem>>.broadcast();
+  late final StreamController<List<DownloadItem>> _controller =
+      StreamController<List<DownloadItem>>.broadcast(
+    onListen: _pushCurrentItems,
+  );
   final List<DownloadItem> _items = [];
   StreamSubscription<bool>? _wifiSub;
+  StreamSubscription<P2pProgressEvent>? _progressSub;
+  bool _disposed = false;
+  late final Future<void> _ready = _init();
 
-  Stream<List<DownloadItem>> get downloads async* {
-    yield List.unmodifiable(_items);
-    yield* _controller.stream;
-  }
+  Stream<List<DownloadItem>> get downloads => _controller.stream;
 
   List<DownloadItem> get currentItems => List.unmodifiable(_items);
   String get trackerListUrl => _trackerManager.listUrl;
@@ -82,13 +87,12 @@ class DownloadManager {
     _emit();
 
     try {
-      await _onSettingsChanged();
       await _directoryService.ensurePermissions();
       final dir = await _directoryService.resolvePath(_settings.downloadDirectoryPath);
       await _engine.initialize(downloadDir: dir);
       await _trackerManager.load();
 
-      _engine.progressStream.listen(_onEngineProgress);
+      _progressSub = _engine.progressStream.listen(_onEngineProgress);
 
       final down = _settings.downloadLimitKbps;
       final up = _settings.uploadLimitKbps;
@@ -142,6 +146,8 @@ class DownloadManager {
     int leechers = 0,
     List<String>? extraTrackers,
   }) async {
+    await _ready;
+
     final normalized = normalizeMagnet(magnet);
     if (!isValidMagnet(normalized)) {
       throw ArgumentError('Invalid magnet link');
@@ -206,6 +212,8 @@ class DownloadManager {
     String path, {
     String? displayName,
   }) async {
+    await _ready;
+
     final id = _uuid.v4();
     final canStart = await _canDownloadNow();
     final item = DownloadItem(
@@ -313,7 +321,20 @@ class DownloadManager {
   }
 
   void updateSettings(AppSettings settings) {
+    final prevPath = _settings.downloadDirectoryPath;
     _settings = settings;
+    if (prevPath != settings.downloadDirectoryPath) {
+      unawaited(_applyDownloadDirectoryFromSettings());
+    }
+  }
+
+  Future<void> _applyDownloadDirectoryFromSettings() async {
+    try {
+      final dir = await _directoryService.resolvePath(_settings.downloadDirectoryPath);
+      await _engine.setDownloadDirectory(dir);
+    } catch (e, st) {
+      debugPrint('Failed to apply download directory: $e\n$st');
+    }
   }
 
   Future<String> resolveDownloadDirectory() async {
@@ -389,33 +410,40 @@ class DownloadManager {
   }
 
   void _onEngineProgress(P2pProgressEvent event) {
-    final item = _find(event.id);
-    if (item == null) return;
+    try {
+      final item = _find(event.id);
+      if (item == null) return;
 
-    var updated = item.copyWith(
-      progress: event.progress,
-      downSpeed: event.downloadBps,
-      upSpeed: event.uploadBps,
-      seeders: event.numSeeds,
-      leechers: event.numPeers,
-      displayName: event.displayName ?? item.displayName,
-    );
-
-    if (event.isCompleted) {
-      updated = updated.copyWith(
-        status: DownloadStatus.completed,
-        progress: 1,
-        completedAt: DateTime.now(),
-        savePath: event.savePath,
-        waitingForWifi: false,
-        errorMessage: null,
+      var updated = item.copyWith(
+        progress: event.progress,
+        downSpeed: event.downloadBps,
+        upSpeed: event.uploadBps,
+        seeders: event.numSeeds,
+        leechers: event.numPeers,
+        displayName: event.displayName ?? item.displayName,
       );
-      if (event.savePath != null) {
-        unawaited(_scanner.scanDirectory(event.savePath!));
-      }
-    }
 
-    _update(event.id, updated);
+      if (event.isCompleted) {
+        updated = updated.copyWith(
+          status: DownloadStatus.completed,
+          progress: 1,
+          completedAt: DateTime.now(),
+          savePath: event.savePath,
+          waitingForWifi: false,
+          errorMessage: null,
+        );
+        if (event.savePath != null) {
+          unawaited(_scanner.scanDirectory(event.savePath!).catchError((e, st) {
+            debugPrint('Library scan failed: $e\n$st');
+            return 0;
+          }));
+        }
+      }
+
+      _update(event.id, updated);
+    } catch (e, st) {
+      debugPrint('Progress update failed: $e\n$st');
+    }
   }
 
   DownloadItem? _find(String id) {
@@ -432,10 +460,17 @@ class DownloadManager {
     _emit();
   }
 
-  void _emit() => _controller.add(List.unmodifiable(_items));
+  void _pushCurrentItems() {
+    if (_disposed || _controller.isClosed) return;
+    _controller.add(List.unmodifiable(_items));
+  }
+
+  void _emit() => _pushCurrentItems();
 
   void dispose() {
+    _disposed = true;
     _wifiSub?.cancel();
+    _progressSub?.cancel();
     _controller.close();
   }
 }

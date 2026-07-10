@@ -6,6 +6,6 @@ abstract final class AppBranding {
   /// Short name shown under the launcher icon and in-app UI.
   static const String shortName = 'JAMP';
 
-  static const String version = '0.0.3-beta';
+  static const String version = '0.0.4-beta';
   static const String tagline = 'Local music player with P2P acquisition.';
 }

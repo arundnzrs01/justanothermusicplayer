@@ -16,7 +16,12 @@ final downloadDirectoryServiceProvider = Provider<DownloadDirectoryService>((ref
 class DownloadDirectoryService {
   Future<String> defaultPath() async {
     if (Platform.isAndroid) {
-      return '/storage/emulated/0/$kDefaultDownloadFolderName';
+      final ext = await getExternalStorageDirectory();
+      if (ext != null) {
+        return '${ext.path}/$kDefaultDownloadFolderName';
+      }
+      final docs = await getApplicationDocumentsDirectory();
+      return '${docs.path}/$kDefaultDownloadFolderName';
     }
     if (Platform.isIOS) {
       final docs = await getApplicationDocumentsDirectory();
