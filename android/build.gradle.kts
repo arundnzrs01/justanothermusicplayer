@@ -1,3 +1,6 @@
+import com.android.build.gradle.BaseExtension
+import com.android.build.gradle.LibraryExtension
+
 allprojects {
     repositories {
         google()
@@ -15,8 +18,16 @@ subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
+
 subprojects {
-    project.evaluationDependsOn(":app")
+    afterEvaluate {
+        extensions.findByName("android")?.let { ext ->
+            when (ext) {
+                is LibraryExtension -> ext.compileSdk = 37
+                is BaseExtension -> ext.compileSdkVersion(37)
+            }
+        }
+    }
 }
 
 tasks.register<Delete>("clean") {
