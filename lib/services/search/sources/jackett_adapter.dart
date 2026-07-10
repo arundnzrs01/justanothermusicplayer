@@ -51,6 +51,7 @@ class JackettAdapter implements SourceAdapter {
     if (title == null || title.isEmpty) return null;
 
     final magnet = json['MagnetUri'] as String? ?? json['Link'] as String?;
+    final infoHash = json['InfoHash'] as String?;
     final size = json['Size'];
     final seeders = json['Seeders'] ?? json['Grabs'];
     final peers = json['Peers'] ?? json['Leechers'];
@@ -65,6 +66,7 @@ class JackettAdapter implements SourceAdapter {
       leechers: peers is int ? peers : int.tryParse('$peers') ?? 0,
       quality: json['CategoryDesc'] as String?,
       magnetUri: magnet?.startsWith('magnet:') == true ? magnet : null,
+      infoHash: infoHash?.length == 40 ? infoHash : null,
     );
   }
 }

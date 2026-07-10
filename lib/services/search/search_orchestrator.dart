@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:torrent_music/core/providers/app_settings_provider.dart';
 import 'package:torrent_music/data/models/search_result.dart';
@@ -20,7 +21,14 @@ class SearchOrchestrator {
   final List<SourceAdapter> _sources;
 
   Future<List<SearchResult>> search(String query) async {
-    final futures = _sources.map((s) => s.search(query));
+    final futures = _sources.map((source) async {
+      try {
+        return await source.search(query);
+      } catch (e, st) {
+        debugPrint('${source.displayName} search error: $e\n$st');
+        return <SearchResult>[];
+      }
+    });
     final results = await Future.wait(futures);
     final merged = results.expand((r) => r).toList()
       ..sort((a, b) => b.seeders.compareTo(a.seeders));

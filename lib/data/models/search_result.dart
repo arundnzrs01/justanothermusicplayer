@@ -1,3 +1,5 @@
+import 'package:torrent_music/services/search/magnet_utils.dart';
+
 class SearchResult {
   const SearchResult({
     required this.id,
@@ -11,6 +13,7 @@ class SearchResult {
     this.date,
     this.magnetUri,
     this.infoHash,
+    this.detailUrl,
   });
 
   final String id;
@@ -24,4 +27,10 @@ class SearchResult {
   final DateTime? date;
   final String? magnetUri;
   final String? infoHash;
+  final String? detailUrl;
+
+  String? get effectiveMagnet =>
+      magnetUri ?? buildMagnetFromHash(infoHash, title);
+
+  bool get canDownload => effectiveMagnet != null;
 }

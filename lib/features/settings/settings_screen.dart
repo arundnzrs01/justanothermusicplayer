@@ -9,9 +9,11 @@ import 'package:torrent_music/core/theme/theme_presets.dart';
 import 'package:torrent_music/features/settings/widgets/tracker_editor_sheet.dart';
 import 'package:torrent_music/services/connectivity_service.dart';
 import 'package:torrent_music/services/p2p/download_manager.dart';
+import 'package:torrent_music/services/p2p/tracker_list_config.dart';
 import 'package:torrent_music/services/p2p/tracker_manager.dart';
 import 'package:torrent_music/services/search/search_orchestrator.dart';
 import 'package:torrent_music/services/sleep_timer_service.dart';
+import 'package:torrent_music/services/storage/download_directory_service.dart';
 import 'package:torrent_music/shared/widgets/section_header.dart';
 import 'package:torrent_music/shared/widgets/sleep_timer_picker.dart';
 import 'package:uuid/uuid.dart';
@@ -107,10 +109,62 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             leading: Icon(Icons.dns_outlined, color: theme.accent),
             title: const Text('Edit network sources'),
             subtitle: Text(
-              '${ref.read(trackerManagerProvider).trackers.length} global sources',
+              '${ref.read(trackerManagerProvider).trackers.length} trackers · ${TrackerListConfig.sourceName}',
               style: TextStyle(color: theme.onBackgroundMuted, fontSize: 12),
             ),
             onTap: () => _openTrackerEditor(context),
+          ),
+          SwitchListTile(
+            title: const Text('Auto-update trackers daily'),
+            subtitle: Text(
+              'Fetch ${TrackerListConfig.listFile} from ${TrackerListConfig.sourceName}',
+              style: TextStyle(color: theme.onBackgroundMuted, fontSize: 12),
+            ),
+            value: settings.autoUpdateTrackersDaily,
+            onChanged: (value) async {
+              await ref
+                  .read(appSettingsProvider.notifier)
+                  .setAutoUpdateTrackersDaily(value);
+              ref.read(downloadManagerProvider).updateSettings(
+                    ref.read(appSettingsProvider),
+                  );
+              if (value) {
+                final ok = await ref
+                    .read(downloadManagerProvider)
+                    .refreshTrackers(force: true);
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      ok ? 'Trackers updated' : 'Could not refresh trackers',
+                    ),
+                  ),
+                );
+              }
+            },
+          ),
+          ListTile(
+            leading: Icon(Icons.update, color: theme.accent),
+            title: const Text('Refresh trackers now'),
+            subtitle: Text(
+              _formatTrackerUpdated(
+                ref.read(downloadManagerProvider).trackersLastUpdated,
+              ),
+              style: TextStyle(color: theme.onBackgroundMuted, fontSize: 12),
+            ),
+            onTap: () async {
+              final ok =
+                  await ref.read(downloadManagerProvider).refreshTrackers(force: true);
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    ok ? 'Trackers updated' : 'Refresh failed — check connection',
+                  ),
+                ),
+              );
+              setState(() {});
+            },
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -161,6 +215,33 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               },
               child: const Text('Apply speed limits'),
             ),
+          ),
+          const Divider(),
+          SectionHeader(title: 'Storage', theme: theme),
+          FutureBuilder<String>(
+            future: ref.read(downloadDirectoryServiceProvider).resolvePath(
+                  settings.downloadDirectoryPath,
+                ),
+            builder: (context, snapshot) {
+              final path = snapshot.data ?? settings.downloadDirectoryPath ?? '…';
+              return ListTile(
+                leading: Icon(Icons.folder_outlined, color: theme.accent),
+                title: const Text('Download folder'),
+                subtitle: Text(
+                  path,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: theme.onBackgroundMuted, fontSize: 12),
+                ),
+                onTap: () => _pickDownloadFolder(context),
+              );
+            },
+          ),
+          ListTile(
+            leading: Icon(Icons.restore, color: theme.accent),
+            title: const Text('Reset download folder'),
+            subtitle: const Text('Use default JAMP folder on device storage'),
+            onTap: () => _resetDownloadFolder(context),
           ),
           const Divider(),
           SectionHeader(title: 'Discover', theme: theme),
@@ -261,13 +342,42 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  Future<void> _pickDownloadFolder(BuildContext context) async {
+    final service = ref.read(downloadDirectoryServiceProvider);
+    await service.ensurePermissions();
+    final picked = await service.pickDirectory();
+    if (picked == null) return;
+    await ref.read(appSettingsProvider.notifier).setDownloadDirectory(picked);
+    await ref.read(downloadManagerProvider).setDownloadDirectory(picked);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Downloads will save to $picked')),
+    );
+    setState(() {});
+  }
+
+  Future<void> _resetDownloadFolder(BuildContext context) async {
+    final service = ref.read(downloadDirectoryServiceProvider);
+    await service.ensurePermissions();
+    final path = await service.defaultPath();
+    await ref.read(appSettingsProvider.notifier).setDownloadDirectory(path);
+    await ref.read(downloadManagerProvider).setDownloadDirectory(path);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Reset to $path')),
+    );
+    setState(() {});
+  }
+
   Future<void> _openTrackerEditor(BuildContext context) async {
     final manager = ref.read(trackerManagerProvider);
     await TrackerEditorSheet.show(
       context,
       title: 'Global network sources',
       initialTrackers: manager.trackers,
-      listUrl: manager.listUrl,
+      listUrl: manager.listUrl.isNotEmpty
+          ? manager.listUrl
+          : TrackerListConfig.defaultListUrl,
       onRefreshFromUrl: (url) async {
         await ref.read(downloadManagerProvider).setTrackerListUrl(url);
       },
@@ -275,6 +385,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         await ref.read(downloadManagerProvider).saveTrackers(trackers);
       },
     );
+  }
+
+  String _formatTrackerUpdated(DateTime? updated) {
+    if (updated == null) return 'Never updated';
+    final local = updated.toLocal();
+    final date =
+        '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
+    final time =
+        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+    return 'Last updated $date $time';
   }
 
   Future<void> _openThemeBuilder(BuildContext context) async {

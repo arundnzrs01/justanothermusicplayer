@@ -98,7 +98,8 @@ class _TrackerEditorSheetState extends State<TrackerEditorSheet> {
               controller: _urlController,
               decoration: const InputDecoration(
                 labelText: 'Global source list URL',
-                hintText: 'https://example.com/trackers.txt',
+                hintText:
+                    'https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt',
               ),
             ),
             Align(

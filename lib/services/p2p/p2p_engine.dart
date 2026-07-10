@@ -33,11 +33,27 @@ class P2pEngine {
   Stream<P2pProgressEvent> get progressStream => _progressController.stream;
   bool get isNative => _useNative;
 
-  Future<void> initialize() async {
-    if (_initialized) return;
+  String? get downloadDir => _downloadDir;
 
-    final docs = await getApplicationDocumentsDirectory();
-    _downloadDir = '${docs.path}/Downloads';
+  Future<void> setDownloadDirectory(String path) async {
+    _downloadDir = path;
+    await Directory(path).create(recursive: true);
+  }
+
+  Future<void> initialize({String? downloadDir}) async {
+    if (_initialized) {
+      if (downloadDir != null && downloadDir != _downloadDir) {
+        _downloadDir = downloadDir;
+        await Directory(_downloadDir!).create(recursive: true);
+      }
+      return;
+    }
+
+    _downloadDir = downloadDir;
+    if (_downloadDir == null) {
+      final docs = await getApplicationDocumentsDirectory();
+      _downloadDir = '${docs.path}/Downloads';
+    }
     await Directory(_downloadDir!).create(recursive: true);
 
     try {

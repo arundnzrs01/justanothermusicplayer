@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:torrent_music/core/theme/app_theme.dart';
@@ -11,7 +13,7 @@ final searchQueryProvider = StateProvider<String>((ref) => '');
 final searchResultsProvider = FutureProvider<List<SearchResult>>((ref) async {
   final query = ref.watch(searchQueryProvider);
   if (query.trim().length < 2) return [];
-  return ref.watch(searchOrchestratorProvider).search(query);
+  return ref.watch(searchOrchestratorProvider).search(query.trim());
 });
 
 class DiscoverScreen extends ConsumerStatefulWidget {
@@ -24,17 +26,27 @@ class DiscoverScreen extends ConsumerStatefulWidget {
 class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   final _controller = TextEditingController();
   final _magnetController = TextEditingController();
+  Timer? _debounce;
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _controller.dispose();
     _magnetController.dispose();
     super.dispose();
   }
 
+  void _onQueryChanged(String value) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 450), () {
+      ref.read(searchQueryProvider.notifier).state = value.trim();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = context.appTheme;
+    final query = ref.watch(searchQueryProvider);
     final resultsAsync = ref.watch(searchResultsProvider);
 
     return Scaffold(
@@ -57,16 +69,17 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                 hintText: 'Search music across sources...',
                 prefixIcon: Icon(Icons.search),
               ),
+              onChanged: _onQueryChanged,
               onSubmitted: (value) {
-                ref.read(searchQueryProvider.notifier).state = value;
-                ref.invalidate(searchResultsProvider);
+                _debounce?.cancel();
+                ref.read(searchQueryProvider.notifier).state = value.trim();
               },
             ),
           ),
           Expanded(
             child: resultsAsync.when(
               data: (results) {
-                if (_controller.text.trim().length < 2) {
+                if (query.trim().length < 2) {
                   return _EmptyDiscover(theme: theme);
                 }
                 if (results.isEmpty) {
@@ -98,8 +111,15 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   }
 
   Future<void> _startDownload(SearchResult result) async {
-    final magnet = result.magnetUri;
-    if (magnet == null) return;
+    final magnet = result.effectiveMagnet;
+    if (magnet == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No download link available for this result')),
+        );
+      }
+      return;
+    }
     await ref.read(downloadManagerProvider).addMagnet(
           magnet,
           displayName: result.title,
@@ -180,6 +200,11 @@ class _EmptyDiscover extends StatelessWidget {
             'Search for music or add a link',
             style: TextStyle(color: theme.onBackgroundMuted),
           ),
+          const SizedBox(height: 8),
+          Text(
+            'Sources: TPB, 1337x, Galaxy, Lime, Torlock',
+            style: TextStyle(color: theme.onBackgroundMuted, fontSize: 12),
+          ),
         ],
       ),
     );
@@ -212,6 +237,8 @@ class _SearchResultTile extends StatelessWidget {
                 _Badge(label: result.sourceName, color: theme.accent),
                 if (result.quality != null)
                   _Badge(label: result.quality!, color: theme.accentSecondary),
+                if (!result.canDownload)
+                  _Badge(label: 'No link', color: theme.onBackgroundMuted),
               ],
             ),
             const SizedBox(height: 4),
@@ -222,8 +249,11 @@ class _SearchResultTile extends StatelessWidget {
           ],
         ),
         trailing: IconButton(
-          onPressed: onDownload,
-          icon: Icon(Icons.download, color: theme.accent),
+          onPressed: result.canDownload ? onDownload : null,
+          icon: Icon(
+            Icons.download,
+            color: result.canDownload ? theme.accent : theme.onBackgroundMuted,
+          ),
         ),
       ),
     );

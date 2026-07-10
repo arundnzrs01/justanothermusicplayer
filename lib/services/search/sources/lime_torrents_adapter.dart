@@ -7,7 +7,10 @@ class LimeTorrentsAdapter implements SourceAdapter {
   LimeTorrentsAdapter({ScrapeClient? client}) : _client = client ?? ScrapeClient();
 
   final ScrapeClient _client;
-  static const _base = 'https://www.limetorrents.lol';
+  static const _mirrors = [
+    'https://www.limetorrents.lol',
+    'https://limetorrents.so',
+  ];
 
   @override
   String get id => 'lime_torrents';
@@ -17,35 +20,34 @@ class LimeTorrentsAdapter implements SourceAdapter {
 
   @override
   Future<List<SearchResult>> search(String query) async {
-    try {
-      final encoded = Uri.encodeComponent(query);
-      final html = await _client.fetch(
-        '$_base/search/all/$encoded/seeds/1/',
-      );
-      final results = parseLimeTable(
-        html,
-        sourceId: id,
-        sourceName: displayName,
-        baseUrl: _base,
-      );
-      if (results.isNotEmpty) return results.take(25).toList();
-    } catch (e, st) {
-      debugPrint('LimeTorrents scrape failed: $e\n$st');
-    }
-    return _fallback(query);
-  }
-
-  List<SearchResult> _fallback(String query) => [
-        SearchResult(
-          id: 'lt_${query.hashCode}_fallback',
-          title: '$query - Discography',
+    final encoded = Uri.encodeComponent(query);
+    for (final base in _mirrors) {
+      try {
+        final html = await _client.fetch('$base/search/all/$encoded/seeds/1/');
+        var results = parseLimeTable(
+          html,
           sourceId: id,
           sourceName: displayName,
-          sizeBytes: 890 * 1024 * 1024,
-          seeders: 19,
-          leechers: 11,
-          quality: 'MP3 V0',
-          magnetUri: 'magnet:?xt=urn:btih:placeholder3&dn=$query',
-        ),
-      ];
+          baseUrl: base,
+        );
+        if (results.isEmpty) continue;
+
+        results = filterMusicResults(results);
+        if (results.isEmpty) {
+          results = parseLimeTable(
+            html,
+            sourceId: id,
+            sourceName: displayName,
+            baseUrl: base,
+          ).take(15).toList();
+        }
+
+        results = await _client.resolveMagnets(results.take(15).toList());
+        return results.where((r) => r.effectiveMagnet != null).take(25).toList();
+      } catch (e, st) {
+        debugPrint('LimeTorrents scrape failed ($base): $e\n$st');
+      }
+    }
+    return [];
+  }
 }

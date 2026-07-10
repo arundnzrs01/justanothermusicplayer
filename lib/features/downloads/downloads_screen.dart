@@ -6,6 +6,7 @@ import 'package:torrent_music/data/models/download_item.dart';
 import 'package:torrent_music/features/settings/widgets/tracker_editor_sheet.dart';
 import 'package:torrent_music/services/connectivity_service.dart';
 import 'package:torrent_music/services/p2p/download_manager.dart';
+import 'package:torrent_music/services/p2p/tracker_list_config.dart';
 import 'package:torrent_music/services/p2p/tracker_manager.dart';
 
 final downloadsProvider = StreamProvider<List<DownloadItem>>((ref) {
@@ -107,7 +108,9 @@ class DownloadsScreen extends ConsumerWidget {
       context,
       title: 'Global network sources',
       initialTrackers: manager.trackers,
-      listUrl: manager.listUrl,
+      listUrl: manager.listUrl.isNotEmpty
+          ? manager.listUrl
+          : TrackerListConfig.defaultListUrl,
       onRefreshFromUrl: (url) async {
         await ref.read(downloadManagerProvider).setTrackerListUrl(url);
       },

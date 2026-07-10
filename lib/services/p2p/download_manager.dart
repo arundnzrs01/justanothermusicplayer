@@ -7,6 +7,7 @@ import 'package:torrent_music/core/providers/app_settings_provider.dart';
 import 'package:torrent_music/data/models/download_item.dart';
 import 'package:torrent_music/services/connectivity_service.dart';
 import 'package:torrent_music/services/library_scanner.dart';
+import 'package:torrent_music/services/storage/download_directory_service.dart';
 import 'package:torrent_music/data/db/app_database.dart';
 import 'package:torrent_music/services/p2p/p2p_engine.dart';
 import 'package:torrent_music/services/p2p/tracker_manager.dart';
@@ -21,6 +22,7 @@ final downloadManagerProvider = Provider<DownloadManager>((ref) {
     scanner: ref.watch(libraryScannerProvider),
     connectivity: ref.watch(connectivityServiceProvider),
     settings: ref.watch(appSettingsProvider),
+    directoryService: ref.watch(downloadDirectoryServiceProvider),
     onSettingsChanged: () => ref.read(appSettingsProvider.notifier).load(),
   );
   ref.onDispose(manager.dispose);
@@ -35,6 +37,7 @@ class DownloadManager {
     required LibraryScanner scanner,
     required ConnectivityService connectivity,
     required AppSettings settings,
+    required DownloadDirectoryService directoryService,
     required Future<void> Function() onSettingsChanged,
   })  : _engine = engine,
         _trackerManager = trackerManager,
@@ -42,6 +45,7 @@ class DownloadManager {
         _scanner = scanner,
         _connectivity = connectivity,
         _settings = settings,
+        _directoryService = directoryService,
         _onSettingsChanged = onSettingsChanged {
     _init();
   }
@@ -52,6 +56,7 @@ class DownloadManager {
   final LibraryScanner _scanner;
   final ConnectivityService _connectivity;
   AppSettings _settings;
+  final DownloadDirectoryService _directoryService;
   final Future<void> Function() _onSettingsChanged;
 
   final _uuid = const Uuid();
@@ -63,11 +68,18 @@ class DownloadManager {
   String get trackerListUrl => _trackerManager.listUrl;
   List<String> get trackers => List.unmodifiable(_trackerManager.trackers);
   bool get wifiOnly => _settings.wifiOnlyDownloads;
+  String? get downloadDirectory => _engine.downloadDir;
+  DateTime? get trackersLastUpdated => _trackerManager.lastUpdatedAt;
 
   Future<void> _init() async {
     await _onSettingsChanged();
+    await _directoryService.ensurePermissions();
+    final dir = await _directoryService.resolvePath(_settings.downloadDirectoryPath);
+    await _engine.initialize(downloadDir: dir);
     await _trackerManager.load();
-    await _engine.initialize();
+    await _trackerManager.maybeAutoRefresh(
+      enabled: _settings.autoUpdateTrackersDaily,
+    );
     _engine.progressStream.listen(_onEngineProgress);
 
     final down = _settings.downloadLimitKbps;
@@ -246,10 +258,35 @@ class DownloadManager {
     _settings = settings;
   }
 
+  Future<String> resolveDownloadDirectory() async {
+    return _directoryService.resolvePath(_settings.downloadDirectoryPath);
+  }
+
+  Future<void> setDownloadDirectory(String path) async {
+    await _directoryService.ensurePermissions();
+    await _engine.setDownloadDirectory(path);
+  }
+
+  Future<void> resetDownloadDirectory() async {
+    final path = await _directoryService.defaultPath();
+    await _engine.setDownloadDirectory(path);
+  }
+
   Future<void> setTrackerListUrl(String url) async {
     await _trackerManager.setListUrl(url);
     await _trackerManager.refreshFromUrl(url);
     await _engine.applyTrackers(_trackerManager.trackers);
+  }
+
+  Future<bool> refreshTrackers({bool force = false}) async {
+    final updated = await _trackerManager.maybeAutoRefresh(
+      enabled: _settings.autoUpdateTrackersDaily,
+      force: force,
+    );
+    if (updated || force) {
+      await _engine.applyTrackers(_trackerManager.trackers);
+    }
+    return updated;
   }
 
   Future<void> saveTrackers(List<String> trackers) async {

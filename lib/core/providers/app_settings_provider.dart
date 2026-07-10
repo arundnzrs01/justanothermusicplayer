@@ -56,24 +56,36 @@ class AppSettings {
     this.downloadLimitKbps = 0,
     this.uploadLimitKbps = 0,
     this.indexer = const IndexerConfig(),
+    this.downloadDirectoryPath,
+    this.autoUpdateTrackersDaily = true,
   });
 
   final bool wifiOnlyDownloads;
   final int downloadLimitKbps;
   final int uploadLimitKbps;
   final IndexerConfig indexer;
+  final String? downloadDirectoryPath;
+  final bool autoUpdateTrackersDaily;
 
   AppSettings copyWith({
     bool? wifiOnlyDownloads,
     int? downloadLimitKbps,
     int? uploadLimitKbps,
     IndexerConfig? indexer,
+    String? downloadDirectoryPath,
+    bool clearDownloadDirectory = false,
+    bool? autoUpdateTrackersDaily,
   }) {
     return AppSettings(
       wifiOnlyDownloads: wifiOnlyDownloads ?? this.wifiOnlyDownloads,
       downloadLimitKbps: downloadLimitKbps ?? this.downloadLimitKbps,
       uploadLimitKbps: uploadLimitKbps ?? this.uploadLimitKbps,
       indexer: indexer ?? this.indexer,
+      downloadDirectoryPath: clearDownloadDirectory
+          ? null
+          : (downloadDirectoryPath ?? this.downloadDirectoryPath),
+      autoUpdateTrackersDaily:
+          autoUpdateTrackersDaily ?? this.autoUpdateTrackersDaily,
     );
   }
 }
@@ -88,6 +100,8 @@ class AppSettingsNotifier extends StateNotifier<AppSettings> {
     final down = await _db.getSetting('download_limit_kbps');
     final up = await _db.getSetting('upload_limit_kbps');
     final indexerJson = await _db.getSetting('indexer_config');
+    final downloadDir = await _db.getSetting('download_directory_path');
+    final autoTrackers = await _db.getSetting('auto_update_trackers_daily');
 
     IndexerConfig indexer = const IndexerConfig();
     if (indexerJson != null && indexerJson.isNotEmpty) {
@@ -101,6 +115,8 @@ class AppSettingsNotifier extends StateNotifier<AppSettings> {
       downloadLimitKbps: int.tryParse(down ?? '') ?? 0,
       uploadLimitKbps: int.tryParse(up ?? '') ?? 0,
       indexer: indexer,
+      downloadDirectoryPath: downloadDir,
+      autoUpdateTrackersDaily: autoTrackers != 'false',
     );
   }
 
@@ -125,6 +141,21 @@ class AppSettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setIndexer(IndexerConfig indexer) async {
     state = state.copyWith(indexer: indexer);
     await _db.setSetting('indexer_config', jsonEncode(indexer.toJson()));
+  }
+
+  Future<void> setDownloadDirectory(String? path) async {
+    if (path == null || path.isEmpty) {
+      state = state.copyWith(clearDownloadDirectory: true);
+      await _db.setSetting('download_directory_path', '');
+    } else {
+      state = state.copyWith(downloadDirectoryPath: path);
+      await _db.setSetting('download_directory_path', path);
+    }
+  }
+
+  Future<void> setAutoUpdateTrackersDaily(bool value) async {
+    state = state.copyWith(autoUpdateTrackersDaily: value);
+    await _db.setSetting('auto_update_trackers_daily', value.toString());
   }
 }
 
