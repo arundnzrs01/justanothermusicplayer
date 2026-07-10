@@ -45,8 +45,8 @@ class X1337Adapter implements SourceAdapter {
           ).take(15).toList();
         }
 
-        results = await _client.resolveMagnets(results.take(15).toList());
-        return results.where((r) => r.effectiveMagnet != null).take(25).toList();
+        results = await _client.resolveMagnets(results.take(10).toList(), maxFetches: 3);
+        return results.where((r) => r.canDownload).take(25).toList();
       } catch (e, st) {
         debugPrint('1337x mirror $base failed: $e\n$st');
       }

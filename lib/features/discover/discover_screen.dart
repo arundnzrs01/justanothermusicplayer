@@ -6,6 +6,7 @@ import 'package:torrent_music/core/theme/app_theme.dart';
 import 'package:torrent_music/core/utils/formatters.dart';
 import 'package:torrent_music/data/models/search_result.dart';
 import 'package:torrent_music/services/p2p/download_manager.dart';
+import 'package:torrent_music/services/search/scrape_client.dart';
 import 'package:torrent_music/services/search/search_orchestrator.dart';
 
 final searchQueryProvider = StateProvider<String>((ref) => '');
@@ -26,6 +27,7 @@ class DiscoverScreen extends ConsumerStatefulWidget {
 class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   final _controller = TextEditingController();
   final _magnetController = TextEditingController();
+  final _scrapeClient = ScrapeClient();
   Timer? _debounce;
 
   @override
@@ -111,7 +113,14 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   }
 
   Future<void> _startDownload(SearchResult result) async {
-    final magnet = result.effectiveMagnet;
+    var magnet = result.effectiveMagnet;
+    if (magnet == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Resolving download link...')),
+      );
+      magnet = await _scrapeClient.resolveMagnetForResult(result);
+    }
     if (magnet == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -120,17 +129,28 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
       }
       return;
     }
-    await ref.read(downloadManagerProvider).addMagnet(
-          magnet,
-          displayName: result.title,
-          sourceName: result.sourceName,
-          seeders: result.seeders,
-          leechers: result.leechers,
+
+    try {
+      final ok = await ref.read(downloadManagerProvider).addMagnet(
+            magnet,
+            displayName: result.title,
+            sourceName: result.sourceName,
+            seeders: result.seeders,
+            leechers: result.leechers,
+          );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(ok ? 'Added to downloads' : 'Failed to start download'),
+          ),
         );
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Added to downloads')),
-      );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Invalid link: $e')),
+        );
+      }
     }
   }
 
@@ -164,8 +184,26 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
               onPressed: () async {
                 final link = _magnetController.text.trim();
                 if (link.isEmpty) return;
-                await ref.read(downloadManagerProvider).addMagnet(link);
-                if (context.mounted) Navigator.pop(context);
+                try {
+                  final ok = await ref.read(downloadManagerProvider).addMagnet(link);
+                  if (!context.mounted) return;
+                  if (!ok) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Failed to start download')),
+                    );
+                    return;
+                  }
+                  _magnetController.clear();
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Added to downloads')),
+                  );
+                } catch (e) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Invalid magnet link')),
+                  );
+                }
               },
               child: const Text('Start download'),
             ),

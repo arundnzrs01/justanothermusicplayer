@@ -52,8 +52,8 @@ class TorlockAdapter implements SourceAdapter {
       }
 
       if (results.isEmpty) return [];
-      final resolved = await _client.resolveMagnets(results.take(15).toList());
-      return resolved.where((r) => r.effectiveMagnet != null).take(25).toList();
+      final resolved = await _client.resolveMagnets(results.take(10).toList(), maxFetches: 3);
+      return resolved.where((r) => r.canDownload).take(25).toList();
     } catch (e, st) {
       debugPrint('Torlock search failed: $e\n$st');
       return [];

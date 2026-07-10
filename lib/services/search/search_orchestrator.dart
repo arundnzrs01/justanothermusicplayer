@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:torrent_music/core/providers/app_settings_provider.dart';
@@ -19,19 +21,50 @@ class SearchOrchestrator {
   SearchOrchestrator(this._sources);
 
   final List<SourceAdapter> _sources;
+  static const _perSourceTimeout = Duration(seconds: 8);
+  static const _overallTimeout = Duration(seconds: 12);
 
   Future<List<SearchResult>> search(String query) async {
-    final futures = _sources.map((source) async {
-      try {
-        return await source.search(query);
-      } catch (e, st) {
-        debugPrint('${source.displayName} search error: $e\n$st');
-        return <SearchResult>[];
+    final merged = <SearchResult>[];
+    var pending = _sources.length;
+    final completer = Completer<List<SearchResult>>();
+    var completed = false;
+
+    void finish() {
+      if (completed) return;
+      completed = true;
+      merged.sort((a, b) => b.seeders.compareTo(a.seeders));
+      if (!completer.isCompleted) {
+        completer.complete(List.unmodifiable(merged));
       }
-    });
-    final results = await Future.wait(futures);
-    final merged = results.expand((r) => r).toList()
-      ..sort((a, b) => b.seeders.compareTo(a.seeders));
-    return merged;
+    }
+
+    final timer = Timer(_overallTimeout, finish);
+
+    for (final source in _sources) {
+      unawaited(_searchSource(source, query).then((results) {
+        merged.addAll(results);
+        pending--;
+        if (pending == 0) finish();
+      }));
+    }
+
+    final results = await completer.future;
+    timer.cancel();
+    return results;
+  }
+
+  Future<List<SearchResult>> _searchSource(
+    SourceAdapter source,
+    String query,
+  ) async {
+    try {
+      return await source
+          .search(query)
+          .timeout(_perSourceTimeout, onTimeout: () => <SearchResult>[]);
+    } catch (e, st) {
+      debugPrint('${source.displayName} search error: $e\n$st');
+      return [];
+    }
   }
 }

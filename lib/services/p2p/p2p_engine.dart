@@ -59,7 +59,7 @@ class P2pEngine {
     try {
       await LibtorrentFlutter.init(
         defaultSavePath: _downloadDir,
-        fetchTrackers: true,
+        fetchTrackers: false,
         pollInterval: const Duration(milliseconds: 500),
       );
       _engine = LibtorrentFlutter.instance;
@@ -79,10 +79,18 @@ class P2pEngine {
     if (_useNative && _engine != null) {
       final savePath = '$_downloadDir/$id';
       await Directory(savePath).create(recursive: true);
-      final torrentId = _engine!.addMagnet(magnet, savePath);
-      _appToTorrent[id] = torrentId;
-      _torrentToApp[torrentId] = id;
-      return;
+      try {
+        final torrentId = _engine!.addMagnet(magnet, savePath);
+        if (torrentId < 0) {
+          throw StateError('libtorrent rejected magnet');
+        }
+        _appToTorrent[id] = torrentId;
+        _torrentToApp[torrentId] = id;
+        return;
+      } catch (e, st) {
+        debugPrint('P2pEngine.addMagnet native error: $e\n$st');
+        rethrow;
+      }
     }
     _startSimulatedDownload(id, magnet);
   }

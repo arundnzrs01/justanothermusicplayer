@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,8 +16,8 @@ class TrackerManager {
 
   final AppDatabase _database;
   final _dio = Dio(BaseOptions(
-    connectTimeout: const Duration(seconds: 20),
-    receiveTimeout: const Duration(seconds: 20),
+    connectTimeout: const Duration(seconds: 8),
+    receiveTimeout: const Duration(seconds: 8),
     headers: {'User-Agent': 'JAMP/1.0'},
   ));
 
@@ -39,7 +41,7 @@ class TrackerManager {
       return;
     }
 
-    await refreshFromUrl(listUrl);
+    unawaited(refreshFromUrl(listUrl));
   }
 
   Future<void> setListUrl(String url) async {
@@ -104,7 +106,7 @@ class TrackerManager {
 
   Future<List<String>> getPerDownloadTrackers(String downloadId) async {
     final stored = await _database.getSetting('dl_trackers_$downloadId');
-    if (stored == null || stored.isEmpty) return List.of(trackers);
+    if (stored == null || stored.isEmpty) return [];
     return stored.split('\n').where((t) => t.trim().isNotEmpty).toList();
   }
 

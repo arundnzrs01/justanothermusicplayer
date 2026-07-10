@@ -7,7 +7,12 @@ import 'package:torrent_music/services/search/source_adapter.dart';
 
 /// The Pirate Bay via apibay JSON API.
 class TpbAdapter implements SourceAdapter {
-  TpbAdapter({Dio? dio}) : _dio = dio ?? Dio();
+  TpbAdapter({Dio? dio})
+      : _dio = dio ??
+            Dio(BaseOptions(
+              connectTimeout: const Duration(seconds: 8),
+              receiveTimeout: const Duration(seconds: 8),
+            ));
 
   final Dio _dio;
   static const _api = 'https://apibay.org';
@@ -26,7 +31,7 @@ class TpbAdapter implements SourceAdapter {
         '$_api/q.php?q=$encoded&cat=100',
         options: Options(
           responseType: ResponseType.json,
-          receiveTimeout: const Duration(seconds: 15),
+          receiveTimeout: const Duration(seconds: 8),
         ),
       );
 

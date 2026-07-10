@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:torrent_music/core/providers/app_providers.dart';
 import 'package:torrent_music/core/providers/app_settings_provider.dart';
@@ -47,6 +48,7 @@ class DownloadManager {
         _settings = settings,
         _directoryService = directoryService,
         _onSettingsChanged = onSettingsChanged {
+    _emit();
     _init();
   }
 
@@ -64,7 +66,12 @@ class DownloadManager {
   final List<DownloadItem> _items = [];
   StreamSubscription<bool>? _wifiSub;
 
-  Stream<List<DownloadItem>> get downloads => _controller.stream;
+  Stream<List<DownloadItem>> get downloads async* {
+    yield List.unmodifiable(_items);
+    yield* _controller.stream;
+  }
+
+  List<DownloadItem> get currentItems => List.unmodifiable(_items);
   String get trackerListUrl => _trackerManager.listUrl;
   List<String> get trackers => List.unmodifiable(_trackerManager.trackers);
   bool get wifiOnly => _settings.wifiOnlyDownloads;
@@ -72,33 +79,54 @@ class DownloadManager {
   DateTime? get trackersLastUpdated => _trackerManager.lastUpdatedAt;
 
   Future<void> _init() async {
-    await _onSettingsChanged();
-    await _directoryService.ensurePermissions();
-    final dir = await _directoryService.resolvePath(_settings.downloadDirectoryPath);
-    await _engine.initialize(downloadDir: dir);
-    await _trackerManager.load();
-    await _trackerManager.maybeAutoRefresh(
-      enabled: _settings.autoUpdateTrackersDaily,
-    );
-    _engine.progressStream.listen(_onEngineProgress);
-
-    final down = _settings.downloadLimitKbps;
-    final up = _settings.uploadLimitKbps;
-    if (down > 0 || up > 0) {
-      await _engine.setSpeedLimits(downloadKbps: down, uploadKbps: up);
-    }
-    await _engine.applyTrackers(_trackerManager.trackers);
-
-    _wifiSub = _connectivity.onWifiChanged.listen((onWifi) {
-      if (!_settings.wifiOnlyDownloads) return;
-      if (onWifi) {
-        unawaited(_resumeWifiBlocked());
-      } else {
-        unawaited(_pauseForWifi());
-      }
-    });
-
     _emit();
+
+    try {
+      await _onSettingsChanged();
+      await _directoryService.ensurePermissions();
+      final dir = await _directoryService.resolvePath(_settings.downloadDirectoryPath);
+      await _engine.initialize(downloadDir: dir);
+      await _trackerManager.load();
+
+      _engine.progressStream.listen(_onEngineProgress);
+
+      final down = _settings.downloadLimitKbps;
+      final up = _settings.uploadLimitKbps;
+      if (down > 0 || up > 0) {
+        await _engine.setSpeedLimits(downloadKbps: down, uploadKbps: up);
+      }
+      if (_trackerManager.trackers.isNotEmpty) {
+        await _engine.applyTrackers(_trackerManager.trackers);
+      }
+
+      _wifiSub = _connectivity.onWifiChanged.listen((onWifi) {
+        if (!_settings.wifiOnlyDownloads) return;
+        if (onWifi) {
+          unawaited(_resumeWifiBlocked());
+        } else {
+          unawaited(_pauseForWifi());
+        }
+      });
+    } catch (e, st) {
+      debugPrint('DownloadManager init error: $e\n$st');
+    } finally {
+      _emit();
+    }
+
+    unawaited(_refreshTrackersInBackground());
+  }
+
+  Future<void> _refreshTrackersInBackground() async {
+    try {
+      final updated = await _trackerManager.maybeAutoRefresh(
+        enabled: _settings.autoUpdateTrackersDaily,
+      );
+      if (updated || _trackerManager.trackers.isNotEmpty) {
+        await _engine.applyTrackers(_trackerManager.trackers);
+      }
+    } catch (e, st) {
+      debugPrint('Background tracker refresh failed: $e\n$st');
+    }
   }
 
   Future<bool> _canDownloadNow() async {
@@ -106,7 +134,7 @@ class DownloadManager {
     return _connectivity.checkIsOnWifi();
   }
 
-  Future<void> addMagnet(
+  Future<bool> addMagnet(
     String magnet, {
     String? displayName,
     String? sourceName,
@@ -114,11 +142,16 @@ class DownloadManager {
     int leechers = 0,
     List<String>? extraTrackers,
   }) async {
+    final normalized = normalizeMagnet(magnet);
+    if (!isValidMagnet(normalized)) {
+      throw ArgumentError('Invalid magnet link');
+    }
+
     final id = _uuid.v4();
-    final trackers = extraTrackers ?? await _trackerManager.getPerDownloadTrackers(id);
-    final enhancedMagnet = injectTrackersIntoMagnet(magnet, [
+    final perDownload = extraTrackers ?? await _trackerManager.getPerDownloadTrackers(id);
+    final enhancedMagnet = injectTrackersIntoMagnet(normalized, [
       ..._trackerManager.trackers,
-      ...trackers,
+      ...perDownload,
     ]);
 
     final canStart = await _canDownloadNow();
@@ -131,17 +164,30 @@ class DownloadManager {
       seeders: seeders,
       leechers: leechers,
       createdAt: DateTime.now(),
-      trackers: trackers,
+      trackers: perDownload,
       waitingForWifi: !canStart,
       errorMessage: canStart ? null : 'Waiting for Wi-Fi',
     );
     _items.insert(0, item);
     _emit();
 
-    if (!canStart) return;
+    if (!canStart) return true;
 
-    await _engine.addMagnet(enhancedMagnet, id: id);
-    _update(id, item.copyWith(status: DownloadStatus.downloading));
+    try {
+      await _engine.addMagnet(enhancedMagnet, id: id);
+      _update(id, item.copyWith(status: DownloadStatus.downloading));
+      return true;
+    } catch (e, st) {
+      debugPrint('addMagnet failed: $e\n$st');
+      _update(
+        id,
+        item.copyWith(
+          status: DownloadStatus.failed,
+          errorMessage: 'Failed to start download',
+        ),
+      );
+      return false;
+    }
   }
 
   Future<void> importPackageFile() async {
@@ -218,7 +264,19 @@ class DownloadManager {
     if (item.magnetOrHash.endsWith('.torrent')) {
       await _engine.addTorrentFile(item.magnetOrHash, id: id);
     } else {
-      await _engine.addMagnet(item.magnetOrHash, id: id);
+      try {
+        await _engine.addMagnet(item.magnetOrHash, id: id);
+      } catch (e, st) {
+        debugPrint('resume addMagnet failed: $e\n$st');
+        _update(
+          id,
+          item.copyWith(
+            status: DownloadStatus.failed,
+            errorMessage: 'Failed to resume download',
+          ),
+        );
+        return;
+      }
     }
     _update(
       id,

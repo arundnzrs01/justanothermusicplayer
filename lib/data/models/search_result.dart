@@ -32,5 +32,6 @@ class SearchResult {
   String? get effectiveMagnet =>
       magnetUri ?? buildMagnetFromHash(infoHash, title);
 
-  bool get canDownload => effectiveMagnet != null;
+  bool get canDownload =>
+      effectiveMagnet != null || detailUrl != null || infoHash != null;
 }

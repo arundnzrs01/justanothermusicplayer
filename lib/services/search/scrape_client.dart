@@ -6,8 +6,8 @@ import 'package:torrent_music/services/search/magnet_utils.dart';
 /// Shared HTTP client for indexer HTML scraping.
 class ScrapeClient {
   ScrapeClient() : _dio = Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 15),
-        receiveTimeout: const Duration(seconds: 15),
+        connectTimeout: const Duration(seconds: 8),
+        receiveTimeout: const Duration(seconds: 8),
         headers: {
           'User-Agent':
               'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36',
@@ -36,24 +36,27 @@ class ScrapeClient {
 
   Future<List<SearchResult>> resolveMagnets(
     List<SearchResult> results, {
-    int maxFetches = 12,
+    int maxFetches = 5,
   }) async {
     final resolved = <SearchResult>[];
-    var fetches = 0;
+    final toFetch = <SearchResult>[];
+
     for (final result in results) {
       if (result.magnetUri != null || result.infoHash != null) {
         resolved.add(result);
-        continue;
-      }
-      final pageUrl = result.detailUrl;
-      if (pageUrl == null || fetches >= maxFetches) {
+      } else if (result.detailUrl != null && toFetch.length < maxFetches) {
+        toFetch.add(result);
+      } else {
         resolved.add(result);
-        continue;
       }
-      fetches++;
-      final magnet = await fetchMagnetFromPage(pageUrl);
-      resolved.add(
-        SearchResult(
+    }
+
+    if (toFetch.isEmpty) return resolved;
+
+    final fetched = await Future.wait(
+      toFetch.map((result) async {
+        final magnet = await fetchMagnetFromPage(result.detailUrl!);
+        return SearchResult(
           id: result.id,
           title: result.title,
           sourceId: result.sourceId,
@@ -66,10 +69,18 @@ class ScrapeClient {
           magnetUri: magnet,
           infoHash: result.infoHash,
           detailUrl: result.detailUrl,
-        ),
-      );
-    }
-    return resolved;
+        );
+      }),
+    );
+
+    return [...resolved, ...fetched];
+  }
+
+  Future<String?> resolveMagnetForResult(SearchResult result) async {
+    if (result.effectiveMagnet != null) return result.effectiveMagnet;
+    final pageUrl = result.detailUrl;
+    if (pageUrl == null) return null;
+    return fetchMagnetFromPage(pageUrl);
   }
 }
 
