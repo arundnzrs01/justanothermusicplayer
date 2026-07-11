@@ -6,6 +6,7 @@ import 'package:torrent_music/core/providers/app_settings_provider.dart';
 import 'package:torrent_music/core/theme/app_theme.dart';
 import 'package:torrent_music/core/theme/theme_notifier.dart';
 import 'package:torrent_music/core/theme/theme_presets.dart';
+import 'package:torrent_music/features/settings/app_log_screen.dart';
 import 'package:torrent_music/features/settings/widgets/tracker_editor_sheet.dart';
 import 'package:torrent_music/services/connectivity_service.dart';
 import 'package:torrent_music/services/p2p/download_manager.dart';
@@ -333,6 +334,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const Divider(),
           SectionHeader(title: 'About', theme: theme),
+          ListTile(
+            leading: Icon(Icons.article_outlined, color: theme.accent),
+            title: const Text('App logs'),
+            subtitle: const Text('View, copy, or share session logs'),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  settings: const RouteSettings(name: '/settings/logs'),
+                  builder: (_) => const AppLogScreen(),
+                ),
+              );
+            },
+          ),
           ListTile(
             title: Text(AppBranding.shortName),
             subtitle: Text('${AppBranding.fullName} v${AppBranding.version}'),

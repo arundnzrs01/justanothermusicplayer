@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:torrent_music/core/theme/app_theme.dart';
 import 'package:torrent_music/features/player/widgets/mini_player.dart';
+import 'package:torrent_music/services/logging/log_action.dart';
 
 class AppShell extends StatelessWidget {
   const AppShell({super.key, required this.child});
@@ -39,6 +40,7 @@ class AppShell extends StatelessWidget {
             3 => '/settings',
             _ => '/library',
           };
+          logTap('shell', 'tab', path);
           context.go(path);
         },
         destinations: const [

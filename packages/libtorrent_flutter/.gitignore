@@ -1,0 +1,7 @@
+android/.cxx/
+example/libtorrent_flutter/
+*.dll
+diff.txt
+full_diff.txt
+temp.hpp
+prebuilt/prebuilt.bak/

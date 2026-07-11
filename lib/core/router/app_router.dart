@@ -4,7 +4,9 @@ import 'package:torrent_music/features/discover/discover_screen.dart';
 import 'package:torrent_music/features/downloads/downloads_screen.dart';
 import 'package:torrent_music/features/library/library_screen.dart';
 import 'package:torrent_music/features/player/now_playing_screen.dart';
+import 'package:torrent_music/features/settings/app_log_screen.dart';
 import 'package:torrent_music/features/settings/settings_screen.dart';
+import 'package:torrent_music/services/logging/app_log_navigator_observer.dart';
 import 'package:torrent_music/shared/widgets/app_shell.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -13,6 +15,7 @@ final _shellNavigatorKey = GlobalKey<NavigatorState>();
 final appRouter = GoRouter(
   navigatorKey: _rootNavigatorKey,
   initialLocation: '/library',
+  observers: [AppLogNavigatorObserver()],
   routes: [
     ShellRoute(
       navigatorKey: _shellNavigatorKey,
@@ -37,6 +40,14 @@ final appRouter = GoRouter(
           path: '/settings',
           pageBuilder: (context, state) =>
               const NoTransitionPage(child: SettingsScreen()),
+          routes: [
+            GoRoute(
+              path: 'logs',
+              parentNavigatorKey: _rootNavigatorKey,
+              pageBuilder: (context, state) =>
+                  const MaterialPage(child: AppLogScreen()),
+            ),
+          ],
         ),
       ],
     ),

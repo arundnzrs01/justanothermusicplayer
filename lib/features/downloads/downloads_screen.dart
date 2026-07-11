@@ -7,6 +7,7 @@ import 'package:torrent_music/core/theme/app_theme.dart';
 import 'package:torrent_music/data/models/download_item.dart';
 import 'package:torrent_music/features/settings/widgets/tracker_editor_sheet.dart';
 import 'package:torrent_music/services/connectivity_service.dart';
+import 'package:torrent_music/services/logging/log_action.dart';
 import 'package:torrent_music/services/p2p/download_manager.dart';
 import 'package:torrent_music/services/p2p/tracker_list_config.dart';
 import 'package:torrent_music/services/p2p/tracker_manager.dart';
@@ -44,7 +45,8 @@ String _peerSummary(DownloadItem item) {
       (phase.contains('metadata') ||
           phase.contains('connecting') ||
           phase.contains('dht') ||
-          phase.contains('peer'));
+          phase.contains('peer') ||
+          phase.contains('looking'));
   if (lookingUp) return 'Looking up…';
   return '${item.seeders} sources · ${item.leechers} waiting';
 }
@@ -90,8 +92,10 @@ class DownloadsScreen extends ConsumerWidget {
               onSelected: (value) async {
                 switch (value) {
                   case 'reannounce':
+                    logTap('downloads', 'refresh_sources');
                     await manager.reannounceAll();
                   case 'trackers':
+                    logTap('downloads', 'edit_global_sources');
                     await _openGlobalTrackerEditor(context, ref);
                 }
               },
@@ -259,21 +263,41 @@ class _DownloadList extends ConsumerWidget {
                   children: [
                     if (item.status == DownloadStatus.downloading)
                       TextButton(
-                        onPressed: () => manager.pause(item.id),
+                        onPressed: () {
+                          logTap('downloads', 'pause', item.id);
+                          manager.pause(item.id);
+                        },
                         child: const Text('Pause'),
                       ),
                     if (item.status == DownloadStatus.paused ||
                         item.waitingForWifi)
                       TextButton(
-                        onPressed: () => manager.resume(item.id),
+                        onPressed: () {
+                          logTap('downloads', 'resume', item.id);
+                          manager.resume(item.id);
+                        },
                         child: Text(item.waitingForWifi ? 'Resume on Wi-Fi' : 'Resume'),
                       ),
+                    if (item.status == DownloadStatus.failed)
+                      TextButton(
+                        onPressed: () {
+                          logTap('downloads', 'retry', item.id);
+                          manager.retryDownload(item.id);
+                        },
+                        child: const Text('Retry'),
+                      ),
                     TextButton(
-                      onPressed: () => _openPerDownloadTrackers(context, item),
+                      onPressed: () {
+                        logTap('downloads', 'sources', item.id);
+                        _openPerDownloadTrackers(context, item);
+                      },
                       child: const Text('Sources'),
                     ),
                     TextButton(
-                      onPressed: () => manager.cancel(item.id),
+                      onPressed: () {
+                        logTap('downloads', 'cancel', item.id);
+                        manager.cancel(item.id);
+                      },
                       child: const Text('Cancel'),
                     ),
                   ],

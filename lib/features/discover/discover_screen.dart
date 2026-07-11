@@ -5,6 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:torrent_music/core/theme/app_theme.dart';
 import 'package:torrent_music/core/utils/formatters.dart';
 import 'package:torrent_music/data/models/search_result.dart';
+import 'package:torrent_music/services/logging/app_log_service.dart';
+import 'package:torrent_music/services/logging/log_action.dart';
+import 'package:torrent_music/services/logging/log_sanitizer.dart';
+import 'package:torrent_music/services/p2p/magnet_metadata_preview.dart';
 import 'package:torrent_music/services/p2p/download_manager.dart';
 import 'package:torrent_music/services/search/scrape_client.dart';
 import 'package:torrent_music/services/search/search_orchestrator.dart';
@@ -26,7 +30,6 @@ class DiscoverScreen extends ConsumerStatefulWidget {
 
 class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   final _controller = TextEditingController();
-  final _magnetController = TextEditingController();
   final _scrapeClient = ScrapeClient();
   Timer? _debounce;
 
@@ -34,7 +37,6 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   void dispose() {
     _debounce?.cancel();
     _controller.dispose();
-    _magnetController.dispose();
     super.dispose();
   }
 
@@ -55,7 +57,10 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
       backgroundColor: theme.background,
       appBar: AppBar(title: const Text('Discover')),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showAddLinkSheet(context, theme),
+        onPressed: () {
+          logTap('discover', 'add_link');
+          _showAddLinkSheet(context, theme);
+        },
         backgroundColor: theme.accent,
         foregroundColor: theme.background,
         icon: const Icon(Icons.link),
@@ -113,6 +118,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   }
 
   Future<void> _startDownload(SearchResult result) async {
+    logTap('discover', 'download', result.title);
     var magnet = result.effectiveMagnet;
     if (magnet == null) {
       if (!mounted) return;
@@ -141,7 +147,9 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(ok ? 'Added to downloads' : 'Failed to start download'),
+            content: Text(
+              ok ? 'Added to downloads — fetching metadata' : 'Failed to start download',
+            ),
           ),
         );
       }
@@ -162,66 +170,205 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
       context: context,
       backgroundColor: theme.surface,
       isScrollControlled: true,
-      builder: (context) => Padding(
-        padding: EdgeInsets.only(
-          left: 16,
-          right: 16,
-          top: 16,
-          bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('Add link', style: Theme.of(context).textTheme.titleLarge),
+      builder: (context) => _AddLinkSheet(
+        theme: theme,
+        onCommitted: () {
+          if (context.mounted) Navigator.pop(context);
+        },
+      ),
+    );
+  }
+}
+
+class _AddLinkSheet extends ConsumerStatefulWidget {
+  const _AddLinkSheet({
+    required this.theme,
+    required this.onCommitted,
+  });
+
+  final AppTheme theme;
+  final VoidCallback onCommitted;
+
+  @override
+  ConsumerState<_AddLinkSheet> createState() => _AddLinkSheetState();
+}
+
+class _AddLinkSheetState extends ConsumerState<_AddLinkSheet> {
+  final _magnetController = TextEditingController();
+  StreamSubscription<MagnetMetadataPreview>? _prefetchSub;
+  Timer? _debounce;
+  MagnetMetadataPreview? _preview;
+  String? _prefetchId;
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _prefetchSub?.cancel();
+    if (_prefetchId != null) {
+      unawaited(
+        ref.read(downloadManagerProvider).cancelMetadataPrefetch(_prefetchId!),
+      );
+    }
+    _magnetController.dispose();
+    super.dispose();
+  }
+
+  void _onMagnetChanged(String value) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 500), () {
+      final trimmed = value.trim();
+      if (trimmed.isNotEmpty) {
+        AppLog.input(sanitizeMagnetPaste(trimmed));
+      }
+      _restartPrefetch(trimmed);
+    });
+  }
+
+  Future<void> _restartPrefetch(String magnet) async {
+    await _prefetchSub?.cancel();
+    _prefetchSub = null;
+    if (_prefetchId != null) {
+      await ref.read(downloadManagerProvider).cancelMetadataPrefetch(_prefetchId!);
+      _prefetchId = null;
+    }
+
+    if (magnet.isEmpty) {
+      setState(() => _preview = null);
+      return;
+    }
+
+    final stream = ref.read(downloadManagerProvider).prefetchMetadata(magnet);
+    _prefetchSub = stream.listen((preview) {
+      if (!mounted) return;
+      setState(() {
+        _preview = preview;
+        if (preview.prefetchId.isNotEmpty) {
+          _prefetchId = preview.prefetchId;
+        }
+      });
+    });
+  }
+
+  Future<void> _startDownload() async {
+    logTap('discover', 'commit_prefetch', _prefetchId);
+    final prefetchId = _prefetchId;
+    if (prefetchId == null || _preview?.canStartDownload != true) return;
+
+    final ok = await ref.read(downloadManagerProvider).commitPrefetchedDownload(
+          prefetchId,
+        );
+    if (!mounted) return;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to start download')),
+      );
+      return;
+    }
+
+    _prefetchId = null;
+    _magnetController.clear();
+    setState(() => _preview = null);
+    widget.onCommitted();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Added to downloads')),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = widget.theme;
+    final preview = _preview;
+    final canStart = preview?.canStartDownload == true;
+
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 16,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Add link', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _magnetController,
+            decoration: const InputDecoration(
+              hintText: 'Paste magnet or package link',
+            ),
+            maxLines: 3,
+            onChanged: _onMagnetChanged,
+          ),
+          if (preview != null) ...[
             const SizedBox(height: 12),
-            TextField(
-              controller: _magnetController,
-              decoration: const InputDecoration(
-                hintText: 'Paste magnet or package link',
+            if (preview.errorMessage != null)
+              Text(
+                preview.errorMessage!,
+                style: TextStyle(color: theme.accentSecondary, fontSize: 13),
+              )
+            else ...[
+              if (preview.displayName != null)
+                Text(
+                  preview.displayName!,
+                  style: TextStyle(
+                    color: theme.onBackground,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  if (preview.isLoading && !preview.hasMetadata)
+                    SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: theme.accent,
+                      ),
+                    ),
+                  if (preview.isLoading && !preview.hasMetadata)
+                    const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      preview.hasMetadata
+                          ? 'Metadata ready'
+                          : (preview.phaseLabel ?? kDownloadingMetadataLabel),
+                      style: TextStyle(color: theme.accent, fontSize: 13),
+                    ),
+                  ),
+                ],
               ),
-              maxLines: 3,
-            ),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: () async {
-                final link = _magnetController.text.trim();
-                if (link.isEmpty) return;
-                try {
-                  final ok = await ref.read(downloadManagerProvider).addMagnet(link);
-                  if (!context.mounted) return;
-                  if (!ok) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Failed to start download')),
-                    );
-                    return;
-                  }
-                  _magnetController.clear();
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Added to downloads')),
-                  );
-                } catch (e) {
-                  if (!context.mounted) return;
-                  final message = e is ArgumentError
-                      ? (e.message?.toString() ?? 'Invalid magnet link')
-                      : 'Failed to start download';
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(message)),
-                  );
-                }
-              },
-              child: const Text('Start download'),
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: () =>
-                  ref.read(downloadManagerProvider).importPackageFile(),
-              icon: const Icon(Icons.upload_file),
-              label: const Text('Import package file'),
-            ),
+            ],
           ],
-        ),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: canStart ? _startDownload : null,
+            child: Text(
+              canStart ? 'Start download' : 'Waiting for metadata…',
+            ),
+          ),
+          if (preview != null && !canStart && preview.isValid)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                'Metadata must finish before downloading.',
+                style: TextStyle(color: theme.onBackgroundMuted, fontSize: 12),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: () {
+              logTap('discover', 'import_package');
+              ref.read(downloadManagerProvider).importPackageFile();
+            },
+            icon: const Icon(Icons.upload_file),
+            label: const Text('Import package file'),
+          ),
+        ],
       ),
     );
   }

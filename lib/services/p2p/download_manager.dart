@@ -1,18 +1,26 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:libtorrent_flutter/libtorrent_flutter.dart' hide TrackerManager;
 import 'package:torrent_music/core/providers/app_providers.dart';
 import 'package:torrent_music/core/providers/app_settings_provider.dart';
 import 'package:torrent_music/data/models/download_item.dart';
 import 'package:torrent_music/services/connectivity_service.dart';
 import 'package:torrent_music/services/library_scanner.dart';
+import 'package:torrent_music/services/logging/app_log_service.dart';
+import 'package:torrent_music/services/logging/log_sanitizer.dart';
 import 'package:torrent_music/services/storage/download_directory_service.dart';
 import 'package:torrent_music/data/db/app_database.dart';
+import 'package:torrent_music/services/p2p/download_persistence.dart';
 import 'package:torrent_music/services/p2p/magnet_link.dart';
+import 'package:torrent_music/services/p2p/magnet_metadata_preview.dart';
 import 'package:torrent_music/services/p2p/peer_bootstrap.dart';
 import 'package:torrent_music/services/p2p/p2p_engine.dart';
+import 'package:torrent_music/services/p2p/session_persistence.dart';
+import 'package:torrent_music/services/p2p/torrent_alert_handler.dart';
 import 'package:torrent_music/services/p2p/torrent_session_config.dart';
 import 'package:torrent_music/services/p2p/tracker_manager.dart';
 import 'package:uuid/uuid.dart';
@@ -77,8 +85,22 @@ class DownloadManager {
   late final Future<void> _ready = _init();
   final Map<String, DateTime> _bootstrapStarted = {};
   final Set<String> _staleRefreshAttempted = {};
+  final Set<String> _prefetchIds = {};
+  final Set<String> _awaitingPieceDownload = {};
+  final Map<String, StreamController<MagnetMetadataPreview>> _prefetchStreams = {};
+  final Map<String, MagnetMetadataPreview> _prefetchLatest = {};
+  String? _activePrefetchId;
+  String? _activePrefetchMagnet;
+  DownloadPersistence? _persistence;
+  late SessionPersistence _sessionPersistence;
+  TorrentAlertHandler? _alertHandler;
+  StreamSubscription<TorrentAlert>? _alertSub;
+  Timer? _resumeSaveTimer;
+  final Map<String, int> _metadataGeneration = {};
+  final Map<String, DateTime> _metadataReceivedAt = {};
   static const _stalePeerTimeout = Duration(seconds: 60);
   static const _metadataTimeout = Duration(minutes: 3);
+  static const _stallTimeout = Duration(minutes: 5);
 
   Stream<List<DownloadItem>> get downloads => _controller.stream;
 
@@ -94,13 +116,75 @@ class DownloadManager {
 
     try {
       final dir = await _resolveAndPrepareDownloadDir();
+      final sessionStatePath =
+          await SessionPersistence.existingSessionStatePath();
       await _engine.initialize(
         downloadDir: dir,
         sessionConfig: TorrentSessionConfig.forSettings(_settings),
+        sessionStatePath: sessionStatePath,
       );
+      _sessionPersistence = _engine.sessionPersistence;
+      await _sessionPersistence.ensureDirectory();
+
+      _persistence = DownloadPersistence(
+        database: _database,
+        downloadDir: dir,
+      );
+      final loaded = await _persistence!.loadAll();
+      _items.addAll(loaded);
+
       await _trackerManager.load();
 
       _progressSub = _engine.progressStream.listen(_onEngineProgress);
+
+      _alertHandler = TorrentAlertHandler(
+        onFinished: (torrentId) {
+          final appId = _engine.appIdForTorrent(torrentId);
+          if (appId == null) return;
+          AppLog.p2p('finished', torrentId: appId);
+        },
+        onError: (torrentId, message) {
+          final appId = _engine.appIdForTorrent(torrentId);
+          AppLog.p2p(
+            'error',
+            torrentId: appId ?? '$torrentId',
+            detail: message,
+          );
+        },
+        onFileError: (torrentId, message) {
+          final appId = _engine.appIdForTorrent(torrentId);
+          AppLog.p2p(
+            'fileError',
+            torrentId: appId ?? '$torrentId',
+            detail: message,
+          );
+        },
+        onMetadataReceived: (torrentId) {
+          final appId = _engine.appIdForTorrent(torrentId);
+          if (appId != null) {
+            _metadataReceivedAt[appId] = DateTime.now();
+          }
+          AppLog.p2p('metadataReceived', torrentId: appId ?? '$torrentId');
+        },
+        onSaveResumeData: (torrentId, bytes) {
+          unawaited(_onSaveResumeData(torrentId, bytes));
+        },
+        takeResumeData: (torrentId) {
+          final appId = _engine.appIdForTorrent(torrentId);
+          if (appId == null) return Uint8List(0);
+          return _engine.takeResumeData(appId);
+        },
+      );
+      _alertSub = _engine.alertStream.listen(_alertHandler!.handle);
+
+      _resumeSaveTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+        for (final item in _items) {
+          if (item.status == DownloadStatus.downloading &&
+              _engine.hasHandle(item.id)) {
+            _engine.requestSaveResumeData(item.id);
+          }
+        }
+      });
 
       final down = _settings.downloadLimitKbps;
       final up = _settings.uploadLimitKbps;
@@ -120,12 +204,21 @@ class DownloadManager {
         }
       });
     } catch (e, st) {
-      debugPrint('DownloadManager init error: $e\n$st');
+      AppLog.error('DownloadManager', 'init error', e, st);
     } finally {
       _emit();
     }
 
     unawaited(_refreshTrackersInBackground());
+  }
+
+  Future<void> _onSaveResumeData(int torrentId, Uint8List bytes) async {
+    final appId = _engine.appIdForTorrent(torrentId);
+    if (appId == null || bytes.isEmpty) return;
+    final item = _find(appId);
+    if (item == null) return;
+    await _persistence?.writeResume(item.magnetOrHash, bytes);
+    AppLog.p2p('resumeSaved', torrentId: appId, detail: 'bytes=${bytes.length}');
   }
 
   Future<String> _resolveAndPrepareDownloadDir() async {
@@ -165,8 +258,10 @@ class DownloadManager {
     int seeders = 0,
     int leechers = 0,
     List<String>? extraTrackers,
+    bool metadataFirst = true,
   }) async {
     await _ready;
+    _engine.requireNative();
 
     final sanitized = sanitizeMagnetInput(magnet);
     final parsed = MagnetLink.parse(sanitized);
@@ -182,9 +277,11 @@ class DownloadManager {
       perDownloadTrackers: perDownload,
     );
 
-    debugPrint(
-      'Adding magnet infohash=${parsed.infoHashHex.substring(0, 8)}… '
-      'trackers=${parsed.trackers.length} enhanced=${MagnetLink.parse(enhancedMagnet)?.trackers.length ?? 0}',
+    AppLog.task(
+      'addMagnet',
+      id: id,
+      phase: 'start',
+      detail: 'infohash=${parsed.infoHashHex.substring(0, 8)}…',
     );
 
     final canStart = await _canDownloadNow();
@@ -200,6 +297,7 @@ class DownloadManager {
       trackers: perDownload,
       waitingForWifi: !canStart,
       errorMessage: canStart ? null : 'Waiting for Wi-Fi',
+      phaseLabel: metadataFirst && canStart ? kDownloadingMetadataLabel : null,
     );
     _items.insert(0, item);
     _emit();
@@ -208,21 +306,33 @@ class DownloadManager {
 
     try {
       await _resolveAndPrepareDownloadDir();
-      await _engine.addMagnet(enhancedMagnet, id: id);
+      final resume = await _persistence?.readResume(enhancedMagnet);
+      _metadataGeneration[id] = (_metadataGeneration[id] ?? 0) + 1;
+      await _engine.addMagnet(
+        enhancedMagnet,
+        id: id,
+        metadataOnly: metadataFirst,
+        resumeData: resume,
+      );
       _bootstrapStarted[id] = DateTime.now();
       _staleRefreshAttempted.remove(id);
+      if (metadataFirst) {
+        _awaitingPieceDownload.add(id);
+      }
       _update(
         id,
         item.copyWith(
           status: DownloadStatus.downloading,
-          phaseLabel: parsed.hasTrackers
-              ? 'Contacting trackers…'
-              : 'Searching DHT for peers…',
+          phaseLabel: metadataFirst
+              ? kDownloadingMetadataLabel
+              : parsed.hasTrackers
+                  ? 'Contacting trackers…'
+                  : 'Searching DHT for peers…',
         ),
       );
       return true;
     } catch (e, st) {
-      debugPrint('addMagnet failed: $e\n$st');
+      AppLog.error('DownloadManager', 'addMagnet failed', e, st);
       final message = e is StateError
           ? 'Download folder is not writable — check Settings → Storage'
           : 'Failed to start download';
@@ -235,6 +345,218 @@ class DownloadManager {
       );
       return false;
     }
+  }
+
+  /// Resolve magnet metadata in the background (not added to downloads yet).
+  Stream<MagnetMetadataPreview> prefetchMetadata(String magnet) {
+    final controller = StreamController<MagnetMetadataPreview>.broadcast(
+      onCancel: () {
+        if (_activePrefetchId != null) {
+          unawaited(cancelMetadataPrefetch(_activePrefetchId!));
+        }
+      },
+    );
+    unawaited(_runMetadataPrefetch(magnet.trim(), controller));
+    return controller.stream;
+  }
+
+  Future<void> _runMetadataPrefetch(
+    String magnet,
+    StreamController<MagnetMetadataPreview> controller,
+  ) async {
+    await _ready;
+
+    AppLog.input(sanitizeMagnetPaste(magnet));
+
+    if (_activePrefetchId != null) {
+      await cancelMetadataPrefetch(_activePrefetchId!);
+    }
+
+    final sanitized = sanitizeMagnetInput(magnet);
+    if (sanitized.isEmpty) {
+      if (!controller.isClosed) {
+        controller.add(
+          MagnetMetadataPreview(
+            prefetchId: '',
+            isValid: false,
+            errorMessage: 'Paste a magnet link',
+          ),
+        );
+      }
+      return;
+    }
+
+    final parsed = MagnetLink.parse(sanitized);
+    if (parsed == null) {
+      if (!controller.isClosed) {
+        controller.add(
+          MagnetMetadataPreview(
+            prefetchId: '',
+            isValid: false,
+            errorMessage: 'Invalid magnet link — could not read infohash',
+          ),
+        );
+      }
+      return;
+    }
+
+    final prefetchId = _uuid.v4();
+    _activePrefetchId = prefetchId;
+    _activePrefetchMagnet = sanitized;
+    _prefetchIds.add(prefetchId);
+    _prefetchStreams[prefetchId] = controller;
+
+    final perDownload = await _trackerManager.getPerDownloadTrackers(prefetchId);
+    final enhancedMagnet = PeerBootstrap.prepareMagnet(
+      parsed.toUri(maxTrackers: parsed.trackers.length.clamp(0, 20)),
+      globalTrackers: _trackerManager.trackers,
+      perDownloadTrackers: perDownload,
+    );
+
+    if (!controller.isClosed) {
+      controller.add(
+        MagnetMetadataPreview(
+          prefetchId: prefetchId,
+          isLoading: true,
+          displayName: parsed.displayName,
+          phaseLabel: kDownloadingMetadataLabel,
+        ),
+      );
+    }
+
+    try {
+      await _resolveAndPrepareDownloadDir();
+      await _engine.addMagnet(
+        enhancedMagnet,
+        id: prefetchId,
+        metadataOnly: true,
+      );
+    } catch (e, st) {
+      AppLog.error('DownloadManager', 'prefetchMetadata failed', e, st);
+      _clearPrefetch(prefetchId);
+      if (!controller.isClosed) {
+        controller.add(
+          MagnetMetadataPreview(
+            prefetchId: prefetchId,
+            isValid: false,
+            errorMessage: 'Failed to fetch metadata',
+          ),
+        );
+        await controller.close();
+      }
+    }
+  }
+
+  Future<void> cancelMetadataPrefetch(String prefetchId) async {
+    if (!_prefetchIds.contains(prefetchId)) return;
+    await _engine.remove(prefetchId, deleteFiles: true);
+    _clearPrefetch(prefetchId);
+  }
+
+  void _clearPrefetch(String prefetchId) {
+    _prefetchIds.remove(prefetchId);
+    _prefetchLatest.remove(prefetchId);
+    final stream = _prefetchStreams.remove(prefetchId);
+    if (_activePrefetchId == prefetchId) {
+      _activePrefetchId = null;
+      _activePrefetchMagnet = null;
+    }
+    unawaited(stream?.close());
+  }
+
+  Future<bool> commitPrefetchedDownload(String prefetchId) async {
+    await _ready;
+    if (!_prefetchIds.contains(prefetchId)) return false;
+
+    final magnet = _activePrefetchMagnet;
+    if (magnet == null) return false;
+
+    final sanitized = sanitizeMagnetInput(magnet);
+    final parsed = MagnetLink.parse(sanitized);
+    if (parsed == null) return false;
+
+    final perDownload = await _trackerManager.getPerDownloadTrackers(prefetchId);
+    final enhancedMagnet = PeerBootstrap.prepareMagnet(
+      parsed.toUri(maxTrackers: parsed.trackers.length.clamp(0, 20)),
+      globalTrackers: _trackerManager.trackers,
+      perDownloadTrackers: perDownload,
+    );
+
+    final canStart = await _canDownloadNow();
+    final preview = _prefetchLatest.remove(prefetchId);
+    final item = DownloadItem(
+      id: prefetchId,
+      displayName: preview?.displayName ?? parsed.displayName ?? 'Download',
+      magnetOrHash: enhancedMagnet,
+      status: canStart ? DownloadStatus.downloading : DownloadStatus.paused,
+      createdAt: DateTime.now(),
+      trackers: perDownload,
+      waitingForWifi: !canStart,
+      errorMessage: canStart ? null : 'Waiting for Wi-Fi',
+      phaseLabel: 'Downloading pieces',
+      seeders: preview?.seeders ?? 0,
+      leechers: preview?.leechers ?? 0,
+    );
+
+    _prefetchIds.remove(prefetchId);
+    _prefetchLatest.remove(prefetchId);
+    final stream = _prefetchStreams.remove(prefetchId);
+    unawaited(stream?.close());
+    if (_activePrefetchId == prefetchId) {
+      _activePrefetchId = null;
+      _activePrefetchMagnet = null;
+    }
+
+    _items.insert(0, item);
+    _emit();
+
+    if (!canStart) return true;
+
+    try {
+      await _engine.beginPieceDownload(prefetchId);
+      _bootstrapStarted[prefetchId] = DateTime.now();
+      _staleRefreshAttempted.remove(prefetchId);
+      return true;
+    } catch (e, st) {
+      AppLog.error('DownloadManager', 'commitPrefetchedDownload failed', e, st);
+      _update(
+        prefetchId,
+        item.copyWith(
+          status: DownloadStatus.failed,
+          errorMessage: 'Failed to start download',
+        ),
+      );
+      return false;
+    }
+  }
+
+  void _onPrefetchProgress(P2pProgressEvent event) {
+    final controller = _prefetchStreams[event.id];
+    if (controller == null || controller.isClosed) return;
+
+    if (event.isFailed) {
+      final failed = MagnetMetadataPreview(
+        prefetchId: event.id,
+        isValid: false,
+        errorMessage: event.errorMessage ?? 'Failed to fetch metadata',
+        phaseLabel: event.phaseLabel,
+      );
+      _prefetchLatest[event.id] = failed;
+      controller.add(failed);
+      return;
+    }
+
+    final preview = MagnetMetadataPreview(
+      prefetchId: event.id,
+      hasMetadata: event.hasMetadata,
+      displayName: event.displayName,
+      phaseLabel: event.phaseLabel ?? kDownloadingMetadataLabel,
+      seeders: event.numSeeds,
+      leechers: event.numPeers,
+      isLoading: !event.hasMetadata,
+    );
+    _prefetchLatest[event.id] = preview;
+    controller.add(preview);
   }
 
   Future<void> importPackageFile() async {
@@ -298,6 +620,19 @@ class DownloadManager {
       return;
     }
 
+    if (_engine.hasHandle(id)) {
+      await _engine.resume(id);
+      _update(
+        id,
+        item.copyWith(
+          status: DownloadStatus.downloading,
+          waitingForWifi: false,
+          errorMessage: null,
+        ),
+      );
+      return;
+    }
+
     if (item.status == DownloadStatus.paused && !item.waitingForWifi) {
       await _engine.resume(id);
       _update(
@@ -315,9 +650,15 @@ class DownloadManager {
       await _engine.addTorrentFile(item.magnetOrHash, id: id);
     } else {
       try {
-        await _engine.addMagnet(item.magnetOrHash, id: id);
+        final resume = await _persistence?.readResume(item.magnetOrHash);
+        _metadataGeneration[id] = (_metadataGeneration[id] ?? 0) + 1;
+        await _engine.addMagnet(
+          item.magnetOrHash,
+          id: id,
+          resumeData: resume,
+        );
       } catch (e, st) {
-        debugPrint('resume addMagnet failed: $e\n$st');
+        AppLog.error('DownloadManager', 'resume addMagnet failed', e, st);
         _update(
           id,
           item.copyWith(
@@ -328,6 +669,8 @@ class DownloadManager {
         return;
       }
     }
+    _bootstrapStarted[id] = DateTime.now();
+    _staleRefreshAttempted.remove(id);
     _update(
       id,
       item.copyWith(
@@ -336,6 +679,68 @@ class DownloadManager {
         errorMessage: null,
       ),
     );
+  }
+
+  Future<void> retryDownload(String id) async {
+    await _ready;
+    final item = _find(id);
+    if (item == null || item.status != DownloadStatus.failed) return;
+
+    AppLog.task('retryDownload', id: id);
+
+    if (_engine.hasHandle(id)) {
+      await _engine.remove(id, deleteFiles: false);
+    }
+
+    if (!await _canDownloadNow()) {
+      _update(
+        id,
+        item.copyWith(
+          status: DownloadStatus.paused,
+          waitingForWifi: true,
+          errorMessage: 'Waiting for Wi-Fi',
+        ),
+      );
+      return;
+    }
+
+    _metadataGeneration[id] = (_metadataGeneration[id] ?? 0) + 1;
+    _bootstrapStarted[id] = DateTime.now();
+    _metadataReceivedAt.remove(id);
+    _staleRefreshAttempted.remove(id);
+
+    try {
+      await _resolveAndPrepareDownloadDir();
+      if (item.magnetOrHash.endsWith('.torrent')) {
+        await _engine.addTorrentFile(item.magnetOrHash, id: id);
+      } else {
+        final resume = await _persistence?.readResume(item.magnetOrHash);
+        await _engine.addMagnet(
+          item.magnetOrHash,
+          id: id,
+          resumeData: resume,
+        );
+      }
+      _update(
+        id,
+        item.copyWith(
+          status: DownloadStatus.downloading,
+          progress: 0,
+          errorMessage: null,
+          phaseLabel: 'Retrying…',
+          waitingForWifi: false,
+        ),
+      );
+    } catch (e, st) {
+      AppLog.error('DownloadManager', 'retryDownload failed', e, st);
+      _update(
+        id,
+        item.copyWith(
+          status: DownloadStatus.failed,
+          errorMessage: 'Failed to retry download',
+        ),
+      );
+    }
   }
 
   Future<void> cancel(String id) async {
@@ -458,6 +863,11 @@ class DownloadManager {
 
   void _onEngineProgress(P2pProgressEvent event) {
     try {
+      if (_prefetchIds.contains(event.id)) {
+        _onPrefetchProgress(event);
+        return;
+      }
+
       final item = _find(event.id);
       if (item == null) return;
 
@@ -511,13 +921,51 @@ class DownloadManager {
         _bootstrapStarted.remove(event.id);
         _staleRefreshAttempted.remove(event.id);
       } else {
+        if (_awaitingPieceDownload.contains(event.id) && event.hasMetadata) {
+          _awaitingPieceDownload.remove(event.id);
+          _metadataReceivedAt[event.id] = DateTime.now();
+          unawaited(_startPieceDownloadAfterMetadata(event.id, updated, event));
+        } else if (event.hasMetadata &&
+            !_metadataReceivedAt.containsKey(event.id)) {
+          _metadataReceivedAt[event.id] = DateTime.now();
+        }
         unawaited(_maybeRefreshStaleDownload(event.id, updated, event));
         unawaited(_maybeFailMetadataTimeout(event.id, updated, event));
+        unawaited(_maybeFailStallTimeout(event.id, updated, event));
       }
 
       _update(event.id, updated);
     } catch (e, st) {
-      debugPrint('Progress update failed: $e\n$st');
+      AppLog.error('DownloadManager', 'Progress update failed', e, st);
+    }
+  }
+
+  Future<void> _startPieceDownloadAfterMetadata(
+    String id,
+    DownloadItem item,
+    P2pProgressEvent event,
+  ) async {
+    try {
+      await _engine.beginPieceDownload(id);
+      _update(
+        id,
+        item.copyWith(
+          status: DownloadStatus.downloading,
+          displayName: event.displayName ?? item.displayName,
+          phaseLabel: 'Downloading pieces',
+          seeders: event.numSeeds,
+          leechers: event.numPeers,
+        ),
+      );
+    } catch (e, st) {
+      AppLog.error('DownloadManager', 'Auto piece download failed', e, st);
+      _update(
+        id,
+        item.copyWith(
+          status: DownloadStatus.failed,
+          errorMessage: 'Failed to start download after metadata',
+        ),
+      );
     }
   }
 
@@ -529,11 +977,16 @@ class DownloadManager {
     if (item.status != DownloadStatus.downloading) return;
     if (event.hasMetadata) return;
 
+    final generation = _metadataGeneration[id];
+    if (generation == null) return;
+
     final started = _bootstrapStarted[id];
     if (started == null) return;
     if (DateTime.now().difference(started) < _metadataTimeout) return;
     if (event.numPeers > 0 || event.numSeeds > 0) return;
     if (!event.seedsKnown || !event.peersKnown) return;
+
+    if (_metadataGeneration[id] != generation) return;
 
     _update(
       id,
@@ -546,6 +999,39 @@ class DownloadManager {
     );
     await _engine.remove(id, deleteFiles: true);
     _bootstrapStarted.remove(id);
+    _metadataGeneration.remove(id);
+  }
+
+  Future<void> _maybeFailStallTimeout(
+    String id,
+    DownloadItem item,
+    P2pProgressEvent event,
+  ) async {
+    if (item.status != DownloadStatus.downloading) return;
+    if (!event.hasMetadata) return;
+    if (item.progress > 0.01 || event.downloadBps > 0) return;
+    if (event.numSeeds > 0 && event.downloadBps == 0) {
+      // Has seeds but no progress yet — allow more time.
+    }
+
+    final metadataAt = _metadataReceivedAt[id];
+    if (metadataAt == null) return;
+    if (DateTime.now().difference(metadataAt) < _stallTimeout) return;
+    if (event.numPeers > 0 || event.numSeeds > 0) {
+      if (DateTime.now().difference(metadataAt) < _stallTimeout * 2) return;
+    }
+
+    _update(
+      id,
+      item.copyWith(
+        status: DownloadStatus.failed,
+        errorMessage: 'Download stalled with no progress. Try again.',
+        phaseLabel: 'Stalled',
+      ),
+    );
+    await _engine.remove(id, deleteFiles: false);
+    _bootstrapStarted.remove(id);
+    _metadataReceivedAt.remove(id);
   }
 
   Future<void> _maybeRefreshStaleDownload(
@@ -554,6 +1040,9 @@ class DownloadManager {
     P2pProgressEvent event,
   ) async {
     if (item.status != DownloadStatus.downloading) return;
+    if (_engine.isMetadataOnly(id)) {
+      if (event.hasMetadata) return;
+    }
     if (item.progress > 0.01 || event.numSeeds > 0 || event.numPeers > 0) {
       return;
     }
@@ -565,8 +1054,8 @@ class DownloadManager {
     if (DateTime.now().difference(started) < _stalePeerTimeout) return;
 
     _staleRefreshAttempted.add(id);
-    debugPrint('Stale download $id — refreshing peer sources');
-    await _engine.reannounceAll();
+    AppLog.task('staleRefresh', id: id);
+    await _engine.reannounceTorrent(id);
     _update(
       id,
       item.copyWith(
@@ -588,7 +1077,26 @@ class DownloadManager {
   void _update(String id, DownloadItem item) {
     final index = _items.indexWhere((i) => i.id == id);
     if (index >= 0) _items[index] = item;
+    unawaited(_persistence?.sync(item));
     _emit();
+  }
+
+  Future<void> shutdownGracefully() async {
+    if (_disposed) return;
+
+    for (final item in _items) {
+      if (_engine.hasHandle(item.id)) {
+        _engine.requestSaveResumeData(item.id);
+      }
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 750));
+
+    for (final item in _items) {
+      await _persistence?.sync(item);
+    }
+    await _engine.saveSessionState();
+
+    AppLog.sys('DownloadManager shutdownGracefully complete');
   }
 
   void _pushCurrentItems() {
@@ -600,8 +1108,18 @@ class DownloadManager {
 
   void dispose() {
     _disposed = true;
+    _resumeSaveTimer?.cancel();
+    _alertSub?.cancel();
     _wifiSub?.cancel();
     _progressSub?.cancel();
+    for (final id in _prefetchIds.toList()) {
+      unawaited(_engine.remove(id, deleteFiles: true));
+    }
+    _prefetchIds.clear();
+    for (final stream in _prefetchStreams.values) {
+      unawaited(stream.close());
+    }
+    _prefetchStreams.clear();
     _controller.close();
   }
 }
