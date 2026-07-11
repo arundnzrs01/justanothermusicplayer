@@ -88,7 +88,7 @@ class P2pEngine {
     try {
       await LibtorrentFlutter.init(
         defaultSavePath: _downloadDir,
-        fetchTrackers: true,
+        fetchTrackers: false,
         pollInterval: const Duration(milliseconds: 500),
       );
       _engine = LibtorrentFlutter.instance;
@@ -200,12 +200,12 @@ class P2pEngine {
 
   Future<void> reannounceAll() async {
     if (_useNative && _engine != null) {
-      // Trigger tracker re-check / piece verification to refresh peer lists.
-      for (final torrentId in _appToTorrent.values) {
+      for (final entry in _appToTorrent.entries) {
         try {
-          _engine!.recheckTorrent(torrentId);
+          _engine!.pauseTorrent(entry.value);
+          _engine!.resumeTorrent(entry.value);
         } catch (e, st) {
-          debugPrint('recheckTorrent failed: $e\n$st');
+          debugPrint('reannounce pause/resume failed: $e\n$st');
         }
       }
       return;
@@ -224,6 +224,8 @@ class P2pEngine {
     }
   }
 
+  static int _clampPeerCount(int count) => count < 0 ? 0 : count;
+
   void _onTorrentUpdates(Map<int, TorrentInfo> torrents) {
     for (final entry in torrents.entries) {
       try {
@@ -239,8 +241,10 @@ class P2pEngine {
               progress: info.progress.clamp(0.0, 1.0),
               downloadBps: 0,
               uploadBps: 0,
-              numSeeds: info.numSeeds,
-              numPeers: info.numPeers,
+              numSeeds: _clampPeerCount(info.numSeeds),
+              numPeers: _clampPeerCount(info.numPeers),
+              seedsKnown: info.numSeeds >= 0,
+              peersKnown: info.numPeers >= 0,
               isFailed: true,
               errorMessage: info.errorMsg,
               phaseLabel: torrentPhaseLabel(info.state),
@@ -271,8 +275,10 @@ class P2pEngine {
             progress: info.progress.clamp(0.0, 1.0),
             downloadBps: info.downloadRate,
             uploadBps: info.uploadRate,
-            numSeeds: info.numSeeds,
-            numPeers: info.numPeers,
+            numSeeds: _clampPeerCount(info.numSeeds),
+            numPeers: _clampPeerCount(info.numPeers),
+            seedsKnown: info.numSeeds >= 0,
+            peersKnown: info.numPeers >= 0,
             isCompleted: completed,
             savePath: completed ? musicImportPath(info, files) : info.savePath,
             displayName: info.name.isNotEmpty ? info.name : null,
@@ -368,6 +374,8 @@ class P2pProgressEvent {
     this.phaseLabel,
     this.errorMessage,
     this.hasMetadata = false,
+    this.seedsKnown = true,
+    this.peersKnown = true,
   });
 
   final String id;
@@ -383,4 +391,6 @@ class P2pProgressEvent {
   final String? phaseLabel;
   final String? errorMessage;
   final bool hasMetadata;
+  final bool seedsKnown;
+  final bool peersKnown;
 }

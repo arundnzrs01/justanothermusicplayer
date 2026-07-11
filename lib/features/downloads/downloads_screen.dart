@@ -34,6 +34,21 @@ final downloadsProvider =
   DownloadsListNotifier.new,
 );
 
+String _peerSummary(DownloadItem item) {
+  if (item.status != DownloadStatus.downloading) {
+    return '${item.seeders} sources · ${item.leechers} waiting';
+  }
+  final phase = item.phaseLabel?.toLowerCase() ?? '';
+  final lookingUp = item.seeders == 0 &&
+      item.leechers == 0 &&
+      (phase.contains('metadata') ||
+          phase.contains('connecting') ||
+          phase.contains('dht') ||
+          phase.contains('peer'));
+  if (lookingUp) return 'Looking up…';
+  return '${item.seeders} sources · ${item.leechers} waiting';
+}
+
 class DownloadsScreen extends ConsumerWidget {
   const DownloadsScreen({super.key});
 
@@ -233,7 +248,7 @@ class _DownloadList extends ConsumerWidget {
                       style: TextStyle(color: theme.onBackgroundMuted),
                     ),
                     Text(
-                      '${item.seeders} sources · ${item.leechers} waiting',
+                      _peerSummary(item),
                       style: TextStyle(color: theme.onBackgroundMuted, fontSize: 12),
                     ),
                   ],

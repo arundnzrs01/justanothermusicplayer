@@ -533,6 +533,7 @@ class DownloadManager {
     if (started == null) return;
     if (DateTime.now().difference(started) < _metadataTimeout) return;
     if (event.numPeers > 0 || event.numSeeds > 0) return;
+    if (!event.seedsKnown || !event.peersKnown) return;
 
     _update(
       id,
@@ -556,6 +557,7 @@ class DownloadManager {
     if (item.progress > 0.01 || event.numSeeds > 0 || event.numPeers > 0) {
       return;
     }
+    if (!event.seedsKnown || !event.peersKnown) return;
     if (_staleRefreshAttempted.contains(id)) return;
 
     final started = _bootstrapStarted[id];
