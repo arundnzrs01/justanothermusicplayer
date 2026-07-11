@@ -148,7 +148,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     } catch (e) {
       if (mounted) {
         final message = e is ArgumentError
-            ? 'Invalid magnet link'
+            ? (e.message?.toString() ?? 'Invalid magnet link')
             : 'Failed to start download';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(message)),
@@ -203,8 +203,11 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                   );
                 } catch (e) {
                   if (!context.mounted) return;
+                  final message = e is ArgumentError
+                      ? (e.message?.toString() ?? 'Invalid magnet link')
+                      : 'Failed to start download';
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Invalid magnet link')),
+                    SnackBar(content: Text(message)),
                   );
                 }
               },

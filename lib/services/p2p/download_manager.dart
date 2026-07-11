@@ -168,20 +168,16 @@ class DownloadManager {
   }) async {
     await _ready;
 
-    final normalized = normalizeMagnet(magnet);
-    if (!isValidMagnet(normalized)) {
-      throw ArgumentError('Invalid magnet link');
-    }
-
-    final parsed = MagnetLink.parse(normalized);
+    final sanitized = sanitizeMagnetInput(magnet);
+    final parsed = MagnetLink.parse(sanitized);
     if (parsed == null) {
-      throw ArgumentError('Invalid magnet link — missing infohash');
+      throw ArgumentError('Invalid magnet link — could not read infohash');
     }
 
     final id = _uuid.v4();
     final perDownload = extraTrackers ?? await _trackerManager.getPerDownloadTrackers(id);
     final enhancedMagnet = PeerBootstrap.prepareMagnet(
-      normalized,
+      parsed.toUri(maxTrackers: parsed.trackers.length.clamp(0, 20)),
       globalTrackers: _trackerManager.trackers,
       perDownloadTrackers: perDownload,
     );

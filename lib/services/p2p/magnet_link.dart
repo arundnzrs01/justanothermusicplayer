@@ -1,8 +1,6 @@
 /// Parsed magnet URI per BitTorrent spec (infohash + optional trackers + display name).
 ///
 /// See: https://stackoverflow.com/questions/3844502/how-do-bittorrent-magnet-links-work
-/// Magnets identify content by infohash; peers come from embedded `tr=` trackers,
-/// DHT (BEP-5), and PEX once connected to the swarm.
 class MagnetLink {
   MagnetLink({
     required this.infoHashHex,
@@ -20,32 +18,33 @@ class MagnetLink {
   bool get hasTrackers => trackers.isNotEmpty;
 
   static MagnetLink? parse(String link) {
-    final trimmed = link.trim();
-    if (!trimmed.startsWith('magnet:?')) return null;
+    final sanitized = sanitizeMagnetInput(link);
+    if (sanitized.isEmpty) return null;
 
-    final hash = _extractInfoHashHex(trimmed);
-    if (hash == null) return null;
-
-    final uri = Uri.tryParse(trimmed);
-    if (uri == null) return null;
-
-    final trackers = <String>[];
-    for (final tr in uri.queryParametersAll['tr'] ?? const []) {
-      final t = tr.trim();
-      if (t.isNotEmpty && !trackers.contains(t)) trackers.add(t);
+    // Raw 40-char hex hash pasted without magnet: prefix.
+    if (RegExp(r'^[0-9a-fA-F]{40}$').hasMatch(sanitized)) {
+      return MagnetLink(
+        infoHashHex: sanitized.toLowerCase(),
+        raw: sanitized,
+      );
     }
 
-    final dn = uri.queryParameters['dn'];
+    if (!sanitized.toLowerCase().startsWith('magnet:')) return null;
+
+    final hash = _extractInfoHashHex(sanitized);
+    if (hash == null || hash.length != 40) return null;
+
+    final trackers = _extractTrackers(sanitized);
+    final dn = _extractDisplayName(sanitized);
 
     return MagnetLink(
       infoHashHex: hash,
-      displayName: dn != null ? Uri.decodeComponent(dn) : null,
+      displayName: dn,
       trackers: trackers,
-      raw: trimmed,
+      raw: sanitized,
     );
   }
 
-  /// Canonical magnet with infohash + display name + trackers (for libtorrent).
   String toUri({
     List<String> extraTrackers = const [],
     int maxTrackers = 8,
@@ -68,14 +67,45 @@ class MagnetLink {
     return buffer.toString();
   }
 
+  static String sanitizeMagnetInput(String raw) {
+    var s = raw.trim();
+    if (s.isEmpty) return s;
+
+    s = s
+        .replaceAll('&amp;', '&')
+        .replaceAll('&#38;', '&')
+        .replaceAll('&#x26;', '&');
+
+    final embedded = RegExp(
+      r'magnet:\?[^\s"<>]+',
+      caseSensitive: false,
+    ).firstMatch(s);
+    if (embedded != null) {
+      s = embedded.group(0)!;
+    }
+
+    if (s.toLowerCase().startsWith('magnet:')) {
+      s = s.replaceFirst(RegExp(r'^magnet:\s*', caseSensitive: false), 'magnet:');
+      if (!s.startsWith('magnet:?')) {
+        final rest = s.substring('magnet:'.length);
+        s = rest.startsWith('?') ? 'magnet:$rest' : 'magnet:?${rest.startsWith('xt=') ? rest : rest}';
+      }
+    }
+
+    return s.trim();
+  }
+
   static String? _extractInfoHashHex(String magnet) {
     final match = RegExp(
-      r'xt=urn:btih:([0-9a-zA-Z]+)',
+      r'(?:\?|&)?xt=urn:btih:([0-9a-zA-Z]+)',
       caseSensitive: false,
     ).firstMatch(magnet);
     if (match == null) return null;
 
-    final token = match.group(1)!.toLowerCase();
+    var token = match.group(1)!;
+    final amp = token.indexOf('&');
+    if (amp >= 0) token = token.substring(0, amp);
+    token = token.toLowerCase();
 
     if (RegExp(r'^[0-9a-f]{40}$').hasMatch(token)) {
       return token;
@@ -86,10 +116,44 @@ class MagnetLink {
     }
 
     if (RegExp(r'^[a-z2-7]{32}$').hasMatch(token)) {
-      return _base32ToHex(token);
+      final hex = _base32ToHex(token);
+      return hex.length == 40 ? hex : null;
     }
 
     return null;
+  }
+
+  static List<String> _extractTrackers(String magnet) {
+    final trackers = <String>[];
+    final matches = RegExp(
+      r'(?:\?|&)tr=([^&]+)',
+      caseSensitive: false,
+    ).allMatches(magnet);
+
+    for (final match in matches) {
+      var tr = match.group(1)!;
+      try {
+        tr = Uri.decodeComponent(tr);
+      } catch (_) {}
+      tr = tr.trim();
+      if (tr.isNotEmpty && !trackers.contains(tr)) {
+        trackers.add(tr);
+      }
+    }
+    return trackers;
+  }
+
+  static String? _extractDisplayName(String magnet) {
+    final match = RegExp(
+      r'(?:\?|&)dn=([^&]*)',
+      caseSensitive: false,
+    ).firstMatch(magnet);
+    if (match == null) return null;
+    try {
+      return Uri.decodeComponent(match.group(1)!);
+    } catch (_) {
+      return match.group(1);
+    }
   }
 
   static String _base32ToHex(String base32) {
@@ -110,14 +174,19 @@ class MagnetLink {
       }
     }
 
+    if (bytes.length != 20) {
+      return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join().padRight(40, '0').substring(0, 40);
+    }
     return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 }
 
+String sanitizeMagnetInput(String link) => MagnetLink.sanitizeMagnetInput(link);
+
 String normalizeMagnet(String link) {
   final parsed = MagnetLink.parse(link);
-  if (parsed == null) return link.trim();
-  return parsed.toUri(maxTrackers: parsed.trackers.length);
+  if (parsed == null) return sanitizeMagnetInput(link);
+  return parsed.toUri(maxTrackers: parsed.trackers.length.clamp(0, 20));
 }
 
 bool isValidMagnet(String link) => MagnetLink.parse(link) != null;
@@ -127,7 +196,6 @@ String? extractInfoHashHex(String link) => MagnetLink.parse(link)?.infoHashHex;
 List<String> extractMagnetTrackers(String link) =>
     MagnetLink.parse(link)?.trackers ?? const [];
 
-/// Inject extra tracker announce URLs (only when magnet lacks them).
 String injectTrackersIntoMagnet(
   String magnet,
   List<String> trackers, {
@@ -135,8 +203,5 @@ String injectTrackersIntoMagnet(
 }) {
   final parsed = MagnetLink.parse(magnet);
   if (parsed == null || trackers.isEmpty) return magnet;
-
   return parsed.toUri(extraTrackers: trackers, maxTrackers: maxTrackers);
 }
-
-/// Parsed magnet URI
