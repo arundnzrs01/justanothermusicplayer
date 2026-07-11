@@ -34,39 +34,3 @@ String? musicImportPath(TorrentInfo info, List<FileInfo> files) {
   if (audioFiles.isEmpty) return info.savePath;
   return info.savePath;
 }
-
-/// Inject a small set of extra tracker URLs into a magnet link.
-/// Large tracker lists can overflow native buffers and crash libtorrent.
-String injectTrackersIntoMagnet(
-  String magnet,
-  List<String> trackers, {
-  int maxTrackers = 12,
-}) {
-  if (trackers.isEmpty || !magnet.startsWith('magnet:')) return magnet;
-
-  final seen = <String>{};
-  final buffer = StringBuffer(magnet);
-  var added = 0;
-
-  for (final tracker in trackers) {
-    if (added >= maxTrackers) break;
-    final trimmed = tracker.trim();
-    if (trimmed.isEmpty || seen.contains(trimmed)) continue;
-    final encoded = Uri.encodeComponent(trimmed);
-    if (magnet.contains(encoded) || magnet.contains(trimmed)) continue;
-    seen.add(trimmed);
-    buffer.write('&tr=$encoded');
-    added++;
-  }
-
-  return buffer.toString();
-}
-
-bool isValidMagnet(String link) {
-  final trimmed = link.trim();
-  if (!trimmed.startsWith('magnet:?')) return false;
-  return RegExp(r'xt=urn:btih:[0-9a-fA-F]{32,40}', caseSensitive: false)
-      .hasMatch(trimmed);
-}
-
-String normalizeMagnet(String link) => link.trim();

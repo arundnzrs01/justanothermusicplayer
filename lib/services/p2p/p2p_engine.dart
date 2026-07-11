@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:libtorrent_flutter/libtorrent_flutter.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:torrent_music/services/p2p/torrent_session_config.dart';
 import 'package:torrent_music/services/p2p/torrent_utils.dart';
 
 final p2pEngineProvider = Provider<P2pEngine>((ref) {
@@ -57,12 +58,18 @@ class P2pEngine {
     }
   }
 
-  Future<void> initialize({String? downloadDir}) async {
+  Future<void> initialize({
+    String? downloadDir,
+    BtConfig? sessionConfig,
+  }) async {
     if (_initialized) {
       if (downloadDir != null && downloadDir != _downloadDir) {
         if (await _verifyWritable(downloadDir)) {
           _downloadDir = downloadDir;
         }
+      }
+      if (sessionConfig != null && _engine != null) {
+        _engine!.configureSession(sessionConfig);
       }
       return;
     }
@@ -81,16 +88,17 @@ class P2pEngine {
     try {
       await LibtorrentFlutter.init(
         defaultSavePath: _downloadDir,
-        fetchTrackers: false,
+        fetchTrackers: true,
         pollInterval: const Duration(milliseconds: 500),
       );
       _engine = LibtorrentFlutter.instance;
+      _engine!.configureSession(sessionConfig ?? const BtConfig());
       _updatesSub = _engine!.torrentUpdates.listen(
         _onTorrentUpdates,
         onError: (e, st) => debugPrint('torrentUpdates stream error: $e\n$st'),
       );
       _useNative = true;
-      debugPrint('P2pEngine: libtorrent initialized');
+      debugPrint('P2pEngine: libtorrent initialized at $_downloadDir');
     } catch (e, st) {
       debugPrint('P2pEngine: libtorrent unavailable, using simulation: $e\n$st');
       _useNative = false;
@@ -105,11 +113,8 @@ class P2pEngine {
       if (_downloadDir == null || !await _verifyWritable(_downloadDir!)) {
         throw StateError('Download directory is not writable');
       }
-      final savePath = '$_downloadDir/$id';
-      await Directory(savePath).create(recursive: true);
-      if (!await _verifyWritable(savePath)) {
-        throw StateError('Cannot write to torrent save path');
-      }
+      // libtorrent creates <savePath>/<torrent-name>/ — use base dir, not UUID subfolder.
+      final savePath = _downloadDir!;
       try {
         final torrentId = _engine!.addMagnet(magnet, savePath);
         if (torrentId < 0) {
@@ -129,8 +134,7 @@ class P2pEngine {
   Future<void> addTorrentFile(String path, {required String id}) async {
     await initialize();
     if (_useNative && _engine != null) {
-      final savePath = '$_downloadDir/$id';
-      await Directory(savePath).create(recursive: true);
+      final savePath = _downloadDir!;
       final torrentId = _engine!.addTorrentFile(path, savePath);
       _appToTorrent[id] = torrentId;
       _torrentToApp[torrentId] = id;
@@ -196,8 +200,13 @@ class P2pEngine {
 
   Future<void> reannounceAll() async {
     if (_useNative && _engine != null) {
+      // Trigger tracker re-check / piece verification to refresh peer lists.
       for (final torrentId in _appToTorrent.values) {
-        _engine!.recheckTorrent(torrentId);
+        try {
+          _engine!.recheckTorrent(torrentId);
+        } catch (e, st) {
+          debugPrint('recheckTorrent failed: $e\n$st');
+        }
       }
       return;
     }
@@ -223,8 +232,25 @@ class P2pEngine {
 
         final info = entry.value;
 
-        // Skip native file prioritization — setFilePriorities can crash libtorrent
-        // on some devices when metadata first arrives and writing begins.
+        if (info.state == TorrentState.error && info.errorMsg.isNotEmpty) {
+          _emitProgress(
+            P2pProgressEvent(
+              id: appId,
+              progress: info.progress.clamp(0.0, 1.0),
+              downloadBps: 0,
+              uploadBps: 0,
+              numSeeds: info.numSeeds,
+              numPeers: info.numPeers,
+              isFailed: true,
+              errorMessage: info.errorMsg,
+              phaseLabel: torrentPhaseLabel(info.state),
+              hasMetadata: info.hasMetadata,
+              displayName: info.name.isNotEmpty ? info.name : null,
+            ),
+          );
+          continue;
+        }
+
         if (info.hasMetadata) {
           _audioPrioritized.add(entry.key);
         }
@@ -250,6 +276,8 @@ class P2pEngine {
             isCompleted: completed,
             savePath: completed ? musicImportPath(info, files) : info.savePath,
             displayName: info.name.isNotEmpty ? info.name : null,
+            phaseLabel: torrentPhaseLabel(info.state),
+            hasMetadata: info.hasMetadata,
           ),
         );
       } catch (e, st) {
@@ -334,8 +362,12 @@ class P2pProgressEvent {
     required this.numSeeds,
     required this.numPeers,
     this.isCompleted = false,
+    this.isFailed = false,
     this.savePath,
     this.displayName,
+    this.phaseLabel,
+    this.errorMessage,
+    this.hasMetadata = false,
   });
 
   final String id;
@@ -345,6 +377,10 @@ class P2pProgressEvent {
   final int numSeeds;
   final int numPeers;
   final bool isCompleted;
+  final bool isFailed;
   final String? savePath;
   final String? displayName;
+  final String? phaseLabel;
+  final String? errorMessage;
+  final bool hasMetadata;
 }

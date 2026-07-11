@@ -201,6 +201,15 @@ class _DownloadList extends ConsumerWidget {
                     item.sourceName!,
                     style: TextStyle(color: theme.onBackgroundMuted, fontSize: 12),
                   ),
+                if (item.phaseLabel != null &&
+                    item.status == DownloadStatus.downloading)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      item.phaseLabel!,
+                      style: TextStyle(color: theme.accent, fontSize: 12),
+                    ),
+                  ),
                 if (item.errorMessage != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),

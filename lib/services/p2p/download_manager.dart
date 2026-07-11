@@ -10,9 +10,11 @@ import 'package:torrent_music/services/connectivity_service.dart';
 import 'package:torrent_music/services/library_scanner.dart';
 import 'package:torrent_music/services/storage/download_directory_service.dart';
 import 'package:torrent_music/data/db/app_database.dart';
+import 'package:torrent_music/services/p2p/magnet_link.dart';
+import 'package:torrent_music/services/p2p/peer_bootstrap.dart';
 import 'package:torrent_music/services/p2p/p2p_engine.dart';
+import 'package:torrent_music/services/p2p/torrent_session_config.dart';
 import 'package:torrent_music/services/p2p/tracker_manager.dart';
-import 'package:torrent_music/services/p2p/torrent_utils.dart';
 import 'package:uuid/uuid.dart';
 
 final downloadManagerProvider = Provider<DownloadManager>((ref) {
@@ -73,6 +75,10 @@ class DownloadManager {
   StreamSubscription<P2pProgressEvent>? _progressSub;
   bool _disposed = false;
   late final Future<void> _ready = _init();
+  final Map<String, DateTime> _bootstrapStarted = {};
+  final Set<String> _staleRefreshAttempted = {};
+  static const _stalePeerTimeout = Duration(seconds: 60);
+  static const _metadataTimeout = Duration(minutes: 3);
 
   Stream<List<DownloadItem>> get downloads => _controller.stream;
 
@@ -88,7 +94,10 @@ class DownloadManager {
 
     try {
       final dir = await _resolveAndPrepareDownloadDir();
-      await _engine.initialize(downloadDir: dir);
+      await _engine.initialize(
+        downloadDir: dir,
+        sessionConfig: TorrentSessionConfig.forSettings(_settings),
+      );
       await _trackerManager.load();
 
       _progressSub = _engine.progressStream.listen(_onEngineProgress);
@@ -164,17 +173,28 @@ class DownloadManager {
       throw ArgumentError('Invalid magnet link');
     }
 
+    final parsed = MagnetLink.parse(normalized);
+    if (parsed == null) {
+      throw ArgumentError('Invalid magnet link — missing infohash');
+    }
+
     final id = _uuid.v4();
     final perDownload = extraTrackers ?? await _trackerManager.getPerDownloadTrackers(id);
-    final enhancedMagnet = injectTrackersIntoMagnet(normalized, [
-      ..._trackerManager.trackers,
-      ...perDownload,
-    ]);
+    final enhancedMagnet = PeerBootstrap.prepareMagnet(
+      normalized,
+      globalTrackers: _trackerManager.trackers,
+      perDownloadTrackers: perDownload,
+    );
+
+    debugPrint(
+      'Adding magnet infohash=${parsed.infoHashHex.substring(0, 8)}… '
+      'trackers=${parsed.trackers.length} enhanced=${MagnetLink.parse(enhancedMagnet)?.trackers.length ?? 0}',
+    );
 
     final canStart = await _canDownloadNow();
     final item = DownloadItem(
       id: id,
-      displayName: displayName ?? 'Download',
+      displayName: displayName ?? parsed.displayName ?? 'Download',
       magnetOrHash: enhancedMagnet,
       status: canStart ? DownloadStatus.queued : DownloadStatus.paused,
       sourceName: sourceName,
@@ -193,7 +213,17 @@ class DownloadManager {
     try {
       await _resolveAndPrepareDownloadDir();
       await _engine.addMagnet(enhancedMagnet, id: id);
-      _update(id, item.copyWith(status: DownloadStatus.downloading));
+      _bootstrapStarted[id] = DateTime.now();
+      _staleRefreshAttempted.remove(id);
+      _update(
+        id,
+        item.copyWith(
+          status: DownloadStatus.downloading,
+          phaseLabel: parsed.hasTrackers
+              ? 'Contacting trackers…'
+              : 'Searching DHT for peers…',
+        ),
+      );
       return true;
     } catch (e, st) {
       debugPrint('addMagnet failed: $e\n$st');
@@ -435,13 +465,36 @@ class DownloadManager {
       final item = _find(event.id);
       if (item == null) return;
 
+      if (event.isFailed) {
+        _update(
+          event.id,
+          item.copyWith(
+            status: DownloadStatus.failed,
+            errorMessage: event.errorMessage ?? 'Download failed',
+            phaseLabel: event.phaseLabel,
+          ),
+        );
+        return;
+      }
+
+      var status = item.status;
+      if (event.isCompleted) {
+        status = DownloadStatus.completed;
+      } else if (item.status == DownloadStatus.queued ||
+          item.status == DownloadStatus.paused) {
+        status = DownloadStatus.downloading;
+      }
+
       var updated = item.copyWith(
+        status: status,
         progress: event.progress,
         downSpeed: event.downloadBps,
         upSpeed: event.uploadBps,
         seeders: event.numSeeds,
         leechers: event.numPeers,
         displayName: event.displayName ?? item.displayName,
+        phaseLabel: event.phaseLabel,
+        errorMessage: null,
       );
 
       if (event.isCompleted) {
@@ -451,7 +504,7 @@ class DownloadManager {
           completedAt: DateTime.now(),
           savePath: event.savePath,
           waitingForWifi: false,
-          errorMessage: null,
+          phaseLabel: 'Complete',
         );
         if (event.savePath != null) {
           unawaited(_scanner.scanDirectory(event.savePath!).catchError((e, st) {
@@ -459,12 +512,71 @@ class DownloadManager {
             return 0;
           }));
         }
+        _bootstrapStarted.remove(event.id);
+        _staleRefreshAttempted.remove(event.id);
+      } else {
+        unawaited(_maybeRefreshStaleDownload(event.id, updated, event));
+        unawaited(_maybeFailMetadataTimeout(event.id, updated, event));
       }
 
       _update(event.id, updated);
     } catch (e, st) {
       debugPrint('Progress update failed: $e\n$st');
     }
+  }
+
+  Future<void> _maybeFailMetadataTimeout(
+    String id,
+    DownloadItem item,
+    P2pProgressEvent event,
+  ) async {
+    if (item.status != DownloadStatus.downloading) return;
+    if (event.hasMetadata) return;
+
+    final started = _bootstrapStarted[id];
+    if (started == null) return;
+    if (DateTime.now().difference(started) < _metadataTimeout) return;
+    if (event.numPeers > 0 || event.numSeeds > 0) return;
+
+    _update(
+      id,
+      item.copyWith(
+        status: DownloadStatus.failed,
+        errorMessage:
+            'No peers found via DHT or trackers. Check internet and try again.',
+        phaseLabel: 'No peers',
+      ),
+    );
+    await _engine.remove(id, deleteFiles: true);
+    _bootstrapStarted.remove(id);
+  }
+
+  Future<void> _maybeRefreshStaleDownload(
+    String id,
+    DownloadItem item,
+    P2pProgressEvent event,
+  ) async {
+    if (item.status != DownloadStatus.downloading) return;
+    if (item.progress > 0.01 || event.numSeeds > 0 || event.numPeers > 0) {
+      return;
+    }
+    if (_staleRefreshAttempted.contains(id)) return;
+
+    final started = _bootstrapStarted[id];
+    if (started == null) return;
+    if (DateTime.now().difference(started) < _stalePeerTimeout) return;
+
+    _staleRefreshAttempted.add(id);
+    debugPrint('Stale download $id — refreshing peer sources');
+    await _engine.reannounceAll();
+    _update(
+      id,
+      item.copyWith(
+        phaseLabel: event.hasMetadata
+            ? 'Waiting for peers…'
+            : 'Searching DHT for peers…',
+      ),
+    );
   }
 
   DownloadItem? _find(String id) {

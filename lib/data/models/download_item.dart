@@ -25,6 +25,7 @@ class DownloadItem {
     this.errorMessage,
     this.trackers = const [],
     this.waitingForWifi = false,
+    this.phaseLabel,
   });
 
   final String id;
@@ -43,6 +44,7 @@ class DownloadItem {
   final String? errorMessage;
   final List<String> trackers;
   final bool waitingForWifi;
+  final String? phaseLabel;
 
   DownloadItem copyWith({
     String? id,
@@ -61,6 +63,7 @@ class DownloadItem {
     String? errorMessage,
     List<String>? trackers,
     bool? waitingForWifi,
+    String? phaseLabel,
   }) {
     return DownloadItem(
       id: id ?? this.id,
@@ -79,6 +82,7 @@ class DownloadItem {
       errorMessage: errorMessage ?? this.errorMessage,
       trackers: trackers ?? this.trackers,
       waitingForWifi: waitingForWifi ?? this.waitingForWifi,
+      phaseLabel: phaseLabel ?? this.phaseLabel,
     );
   }
 }

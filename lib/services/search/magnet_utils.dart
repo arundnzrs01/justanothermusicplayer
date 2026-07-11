@@ -1,8 +1,20 @@
+import 'package:torrent_music/services/p2p/magnet_link.dart';
+
 String? buildMagnetFromHash(String? hash, String title) {
   if (hash == null || hash.isEmpty) return null;
   final normalized = hash.toLowerCase().replaceAll('-', '');
-  if (normalized.length != 40) return null;
-  return 'magnet:?xt=urn:btih:$normalized&dn=${Uri.encodeComponent(title)}';
+
+  String? infoHex;
+  if (RegExp(r'^[0-9a-f]{40}$').hasMatch(normalized)) {
+    infoHex = normalized;
+  } else if (RegExp(r'^[0-9a-f]{32}$').hasMatch(normalized)) {
+    infoHex = normalized.padRight(40, '0');
+  } else if (RegExp(r'^[a-z2-7]{32}$').hasMatch(normalized)) {
+    infoHex = MagnetLink.parse('magnet:?xt=urn:btih:$normalized')?.infoHashHex;
+  }
+
+  if (infoHex == null) return null;
+  return MagnetLink(infoHashHex: infoHex, displayName: title).toUri();
 }
 
 String? extractMagnetFromHtml(String html) {
