@@ -1,46 +1,31 @@
-# Just Another Music Player (JAMP)
+# JAMP Torrent
 
-Android music player with torrent downloads (libtorrent4j / LibreTorrent engine), local library playback, and a Dribbble-inspired Now Playing screen.
+Android torrent client forked from [LibreTorrent](https://github.com/proninyaroslav/libretorrent), powered by [libtorrent4j](https://github.com/aldenml/libtorrent4j).
 
 ## Features
 
-- **Library** — browse by songs, artists, albums, genres, years; search and filter
-- **Now Playing** — album art, spinning vinyl, waveform scrubber, queue pill
-- **Themes** — Pastel Meadow default; built-in presets and custom theme builder
-- **Downloads** — paste magnet links or import `.torrent` files via the + button
-- **Settings** — appearance, network limits, playback options
+- Magnet links and `.torrent` file import
+- Real-time download progress, speeds, seeds, and peers
+- Background downloads via foreground service
+- Wi-Fi only mode, proxy support, and scheduling (from upstream)
+- Pastel Meadow dark theme reskin
 
-## Getting started
+## Build
 
-Requires Flutter SDK and an Android device or emulator (API 24+).
-
-```bash
-flutter pub get
-dart run build_runner build --delete-conflicting-outputs
-flutter run
-```
-
-Build a release APK:
+Requires Java 17 and Android SDK 36.
 
 ```bash
-flutter build apk --release
+./gradlew :app:assembleBaseDebug
 ```
 
-## Project structure
+Release APK (base flavor, full storage access):
 
-- `lib/core/` — theme engine, router, providers, branding
-- `lib/data/` — Drift database, models, repositories
-- `lib/features/` — library, player, downloads, settings
-- `lib/services/` — torrent engine bridge, library scanner, audio
-- `android/` — Kotlin libtorrent4j integration
+```bash
+./gradlew :app:assembleBaseRelease
+```
 
-## Notes
-
-- **libtorrent4j** powers real P2P downloads on Android (same engine family as [LibreTorrent](https://github.com/proninyaroslav/libretorrent)).
-- **audio_service** provides lock-screen and notification playback controls.
-- **Share intents**: open magnet links or `.torrent` files from other apps via `app_links` + `receive_sharing_intent`.
-- This project targets **Android only**; iOS, desktop, and web platforms are not supported.
+Install the debug APK from `app/build/outputs/apk/base/debug/`.
 
 ## License
 
-GPL-3.0 — see [LICENSE](LICENSE).
+GPL-3.0 — this project is a derivative of LibreTorrent. See [LICENSE.md](LICENSE.md) and [NOTICE](NOTICE).

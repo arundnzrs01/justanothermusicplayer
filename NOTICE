@@ -1,0 +1,13 @@
+JAMP Torrent
+
+This application is a derivative work based on LibreTorrent
+(https://github.com/proninyaroslav/libretorrent)
+Copyright (C) 2016-2025 Yaroslav Pronin <proninyaroslav@mail.ru>
+
+LibreTorrent is free software licensed under the GNU General Public License
+version 3 or later (GPL-3.0).
+
+JAMP Torrent modifications:
+Copyright (C) 2026 JAMP contributors
+
+Licensed under GPL-3.0. See LICENSE and LICENSE.md for the full license text.
