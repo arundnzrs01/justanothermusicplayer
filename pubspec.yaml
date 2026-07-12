@@ -1,7 +1,7 @@
 name: torrent_music
-description: Just Another Music Player (JAMP) — local music player with P2P acquisition.
+description: Just Another Music Player (JAMP) — Android music player with torrent downloads.
 publish_to: 'none'
-version: 0.0.10+10
+version: 0.0.11+11
 
 environment:
   sdk: ^3.12.2
@@ -21,15 +21,11 @@ dependencies:
   just_audio: ^0.9.46
   audio_service: ^0.18.18
   audio_session: ^0.1.25
-  dio: ^5.8.0+1
-  html: ^0.15.5+1
   file_picker: ^8.3.7
   flex_color_picker: ^3.7.0
   uuid: ^4.5.1
   intl: ^0.20.2
   collection: ^1.19.1
-  libtorrent_flutter:
-    path: packages/libtorrent_flutter
   share_plus: ^10.1.4
   receive_sharing_intent: ^1.9.0
   app_links: ^7.2.1
@@ -46,18 +42,8 @@ dev_dependencies:
 
 flutter_launcher_icons:
   android: true
-  ios: true
   image_path: assets/app_icon.png
   min_sdk_android: 21
-  remove_alpha_ios: true
-  macos:
-    generate: true
-  web:
-    generate: true
-    background_color: "#1B4332"
-    theme_color: "#52B788"
-  windows:
-    generate: true
 
 flutter:
   uses-material-design: true

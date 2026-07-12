@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:torrent_music/features/discover/discover_screen.dart';
 import 'package:torrent_music/features/downloads/downloads_screen.dart';
 import 'package:torrent_music/features/library/library_screen.dart';
 import 'package:torrent_music/features/player/now_playing_screen.dart';
@@ -25,11 +24,6 @@ final appRouter = GoRouter(
           path: '/library',
           pageBuilder: (context, state) =>
               const NoTransitionPage(child: LibraryScreen()),
-        ),
-        GoRoute(
-          path: '/discover',
-          pageBuilder: (context, state) =>
-              const NoTransitionPage(child: DiscoverScreen()),
         ),
         GoRoute(
           path: '/downloads',

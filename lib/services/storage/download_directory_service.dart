@@ -12,7 +12,7 @@ final downloadDirectoryServiceProvider = Provider<DownloadDirectoryService>((ref
   return DownloadDirectoryService();
 });
 
-/// Resolves and manages the user-configurable download folder.
+/// Resolves and manages the user-configurable download folder on Android.
 class DownloadDirectoryService {
   /// Paths on shared storage that need MANAGE_EXTERNAL_STORAGE on Android 11+.
   bool isPublicStoragePath(String path) {
@@ -27,29 +27,15 @@ class DownloadDirectoryService {
   }
 
   Future<String> defaultPath() async {
-    if (Platform.isAndroid) {
-      final ext = await getExternalStorageDirectory();
-      if (ext != null) {
-        return '${ext.path}/$kDefaultDownloadFolderName';
-      }
-      final docs = await getApplicationDocumentsDirectory();
-      return '${docs.path}/$kDefaultDownloadFolderName';
-    }
-    if (Platform.isIOS) {
-      final docs = await getApplicationDocumentsDirectory();
-      return '${docs.path}/$kDefaultDownloadFolderName';
-    }
-    final home = Platform.environment['HOME'];
-    if (home != null) {
-      return '$home/$kDefaultDownloadFolderName';
+    final ext = await getExternalStorageDirectory();
+    if (ext != null) {
+      return '${ext.path}/$kDefaultDownloadFolderName';
     }
     final docs = await getApplicationDocumentsDirectory();
     return '${docs.path}/$kDefaultDownloadFolderName';
   }
 
   Future<bool> ensurePermissions({String? forPath}) async {
-    if (!Platform.isAndroid) return true;
-
     final target = forPath ?? await defaultPath();
     if (!isPublicStoragePath(target) || isAppScopedPath(target)) {
       return true;
@@ -133,9 +119,7 @@ class DownloadDirectoryService {
   }
 
   Future<String?> pickDirectory() async {
-    if (Platform.isAndroid) {
-      await _ensurePublicStorageAccess();
-    }
+    await _ensurePublicStorageAccess();
 
     final picked = await FilePicker.platform.getDirectoryPath(
       dialogTitle: 'Choose download folder',

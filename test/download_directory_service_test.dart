@@ -21,22 +21,14 @@ void main() {
       }
     });
 
-    test('returns true when write and read succeed even if delete fails', () async {
+    test('returns true when write and read succeed', () async {
       final testFile = File('${tempDir.path}/.jamp_write_test');
       await testFile.writeAsString('ok');
 
-      final originalDelete = testFile.delete;
-      var deleteCalled = false;
-      // ignore: invalid_use_of_visible_for_testing_member
-      try {
-        // Simulate delete failure after successful write/read.
-        expect(await service.canWriteTo(tempDir.path), isTrue);
-      } finally {
-        if (deleteCalled) {
-          // no-op
-        } else if (await testFile.exists()) {
-          await testFile.delete();
-        }
+      expect(await service.canWriteTo(tempDir.path), isTrue);
+
+      if (await testFile.exists()) {
+        await testFile.delete();
       }
     });
   });

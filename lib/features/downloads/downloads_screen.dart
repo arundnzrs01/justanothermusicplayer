@@ -5,12 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:torrent_music/core/providers/app_settings_provider.dart';
 import 'package:torrent_music/core/theme/app_theme.dart';
 import 'package:torrent_music/data/models/download_item.dart';
-import 'package:torrent_music/features/settings/widgets/tracker_editor_sheet.dart';
+import 'package:torrent_music/features/downloads/add_download_sheet.dart';
 import 'package:torrent_music/services/connectivity_service.dart';
 import 'package:torrent_music/services/logging/log_action.dart';
-import 'package:torrent_music/services/p2p/download_manager.dart';
-import 'package:torrent_music/services/p2p/tracker_list_config.dart';
-import 'package:torrent_music/services/p2p/tracker_manager.dart';
+import 'package:torrent_music/services/torrent/download_manager.dart';
 import 'package:torrent_music/shared/widgets/empty_state.dart';
 
 class DownloadsListNotifier extends Notifier<List<DownloadItem>> {
@@ -34,22 +32,6 @@ final downloadsProvider =
     NotifierProvider<DownloadsListNotifier, List<DownloadItem>>(
   DownloadsListNotifier.new,
 );
-
-String _peerSummary(DownloadItem item) {
-  if (item.status != DownloadStatus.downloading) {
-    return '${item.seeders} sources · ${item.leechers} waiting';
-  }
-  final phase = item.phaseLabel?.toLowerCase() ?? '';
-  final lookingUp = item.seeders == 0 &&
-      item.leechers == 0 &&
-      (phase.contains('metadata') ||
-          phase.contains('connecting') ||
-          phase.contains('dht') ||
-          phase.contains('peer') ||
-          phase.contains('looking'));
-  if (lookingUp) return 'Looking up…';
-  return '${item.seeders} sources · ${item.leechers} waiting';
-}
 
 class DownloadsScreen extends ConsumerWidget {
   const DownloadsScreen({super.key});
@@ -88,22 +70,6 @@ class DownloadsScreen extends ConsumerWidget {
                 loading: () => const SizedBox.shrink(),
                 error: (_, __) => const SizedBox.shrink(),
               ),
-            PopupMenuButton<String>(
-              onSelected: (value) async {
-                switch (value) {
-                  case 'reannounce':
-                    logTap('downloads', 'refresh_sources');
-                    await manager.reannounceAll();
-                  case 'trackers':
-                    logTap('downloads', 'edit_global_sources');
-                    await _openGlobalTrackerEditor(context, ref);
-                }
-              },
-              itemBuilder: (context) => const [
-                PopupMenuItem(value: 'reannounce', child: Text('Refresh sources')),
-                PopupMenuItem(value: 'trackers', child: Text('Edit global sources')),
-              ],
-            ),
           ],
         ),
         body: TabBarView(
@@ -116,9 +82,8 @@ class DownloadsScreen extends ConsumerWidget {
                       d.status == DownloadStatus.paused)
                   .toList(),
               manager: manager,
-              ref: ref,
               emptyTitle: 'No active downloads',
-              emptySubtitle: 'Search in Discover or paste a magnet link to start',
+              emptySubtitle: 'Tap + to paste a magnet link or upload a torrent file',
               emptyIcon: Icons.download_outlined,
             ),
             _DownloadList(
@@ -126,7 +91,6 @@ class DownloadsScreen extends ConsumerWidget {
                   .where((d) => d.status == DownloadStatus.completed)
                   .toList(),
               manager: manager,
-              ref: ref,
               emptyTitle: 'No completed downloads',
               emptySubtitle: 'Finished downloads will appear here',
               emptyIcon: Icons.check_circle_outline,
@@ -136,32 +100,20 @@ class DownloadsScreen extends ConsumerWidget {
                   .where((d) => d.status == DownloadStatus.failed)
                   .toList(),
               manager: manager,
-              ref: ref,
               emptyTitle: 'No failed downloads',
               emptySubtitle: 'Downloads that could not finish will appear here',
               emptyIcon: Icons.error_outline,
             ),
           ],
         ),
+        floatingActionButton: FloatingActionButton(
+          onPressed: () {
+            logTap('downloads', 'add');
+            AddDownloadSheet.show(context);
+          },
+          child: const Icon(Icons.add),
+        ),
       ),
-    );
-  }
-
-  Future<void> _openGlobalTrackerEditor(BuildContext context, WidgetRef ref) async {
-    final manager = ref.read(trackerManagerProvider);
-    await TrackerEditorSheet.show(
-      context,
-      title: 'Global network sources',
-      initialTrackers: manager.trackers,
-      listUrl: manager.listUrl.isNotEmpty
-          ? manager.listUrl
-          : TrackerListConfig.defaultListUrl,
-      onRefreshFromUrl: (url) async {
-        await ref.read(downloadManagerProvider).setTrackerListUrl(url);
-      },
-      onSave: (trackers) async {
-        await ref.read(downloadManagerProvider).saveTrackers(trackers);
-      },
     );
   }
 }
@@ -170,7 +122,6 @@ class _DownloadList extends ConsumerWidget {
   const _DownloadList({
     required this.items,
     required this.manager,
-    required this.ref,
     required this.emptyTitle,
     required this.emptySubtitle,
     required this.emptyIcon,
@@ -178,7 +129,6 @@ class _DownloadList extends ConsumerWidget {
 
   final List<DownloadItem> items;
   final DownloadManager manager;
-  final WidgetRef ref;
   final String emptyTitle;
   final String emptySubtitle;
   final IconData emptyIcon;
@@ -197,7 +147,7 @@ class _DownloadList extends ConsumerWidget {
     }
 
     return ListView.separated(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 88),
       itemCount: items.length,
       separatorBuilder: (_, __) => const SizedBox(height: 8),
       itemBuilder: (context, index) {
@@ -215,11 +165,6 @@ class _DownloadList extends ConsumerWidget {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                if (item.sourceName != null)
-                  Text(
-                    item.sourceName!,
-                    style: TextStyle(color: theme.onBackgroundMuted, fontSize: 12),
-                  ),
                 if (item.phaseLabel != null &&
                     item.status == DownloadStatus.downloading)
                   Padding(
@@ -252,7 +197,7 @@ class _DownloadList extends ConsumerWidget {
                       style: TextStyle(color: theme.onBackgroundMuted),
                     ),
                     Text(
-                      _peerSummary(item),
+                      '${item.seeders} seeds · ${item.leechers} peers',
                       style: TextStyle(color: theme.onBackgroundMuted, fontSize: 12),
                     ),
                   ],
@@ -269,14 +214,15 @@ class _DownloadList extends ConsumerWidget {
                         },
                         child: const Text('Pause'),
                       ),
-                    if (item.status == DownloadStatus.paused ||
-                        item.waitingForWifi)
+                    if (item.status == DownloadStatus.paused || item.waitingForWifi)
                       TextButton(
                         onPressed: () {
                           logTap('downloads', 'resume', item.id);
                           manager.resume(item.id);
                         },
-                        child: Text(item.waitingForWifi ? 'Resume on Wi-Fi' : 'Resume'),
+                        child: Text(
+                          item.waitingForWifi ? 'Resume on Wi-Fi' : 'Resume',
+                        ),
                       ),
                     if (item.status == DownloadStatus.failed)
                       TextButton(
@@ -286,13 +232,6 @@ class _DownloadList extends ConsumerWidget {
                         },
                         child: const Text('Retry'),
                       ),
-                    TextButton(
-                      onPressed: () {
-                        logTap('downloads', 'sources', item.id);
-                        _openPerDownloadTrackers(context, item);
-                      },
-                      child: const Text('Sources'),
-                    ),
                     TextButton(
                       onPressed: () {
                         logTap('downloads', 'cancel', item.id);
@@ -306,27 +245,6 @@ class _DownloadList extends ConsumerWidget {
             ),
           ),
         );
-      },
-    );
-  }
-
-  Future<void> _openPerDownloadTrackers(
-    BuildContext context,
-    DownloadItem item,
-  ) async {
-    final trackers = item.trackers.isNotEmpty
-        ? item.trackers
-        : ref.read(trackerManagerProvider).trackers;
-
-    await TrackerEditorSheet.show(
-      context,
-      title: 'Sources for ${item.displayName}',
-      initialTrackers: trackers,
-      onSave: (updated) async {
-        await ref.read(downloadManagerProvider).savePerDownloadTrackers(
-              item.id,
-              updated,
-            );
       },
     );
   }

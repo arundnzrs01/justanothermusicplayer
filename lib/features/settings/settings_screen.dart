@@ -7,14 +7,10 @@ import 'package:torrent_music/core/theme/app_theme.dart';
 import 'package:torrent_music/core/theme/theme_notifier.dart';
 import 'package:torrent_music/core/theme/theme_presets.dart';
 import 'package:torrent_music/features/settings/app_log_screen.dart';
-import 'package:torrent_music/features/settings/widgets/tracker_editor_sheet.dart';
 import 'package:torrent_music/services/connectivity_service.dart';
-import 'package:torrent_music/services/p2p/download_manager.dart';
-import 'package:torrent_music/services/p2p/tracker_list_config.dart';
-import 'package:torrent_music/services/p2p/tracker_manager.dart';
-import 'package:torrent_music/services/search/search_orchestrator.dart';
 import 'package:torrent_music/services/sleep_timer_service.dart';
 import 'package:torrent_music/services/storage/download_directory_service.dart';
+import 'package:torrent_music/services/torrent/download_manager.dart';
 import 'package:torrent_music/shared/widgets/section_header.dart';
 import 'package:torrent_music/shared/widgets/sleep_timer_picker.dart';
 import 'package:uuid/uuid.dart';
@@ -27,28 +23,6 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  final _downloadLimitController = TextEditingController();
-  final _uploadLimitController = TextEditingController();
-  final _indexerUrlController = TextEditingController();
-  final _indexerKeyController = TextEditingController();
-  final _indexerNameController = TextEditingController();
-
-  @override
-  void dispose() {
-    _downloadLimitController.dispose();
-    _uploadLimitController.dispose();
-    _indexerUrlController.dispose();
-    _indexerKeyController.dispose();
-    _indexerNameController.dispose();
-    super.dispose();
-  }
-
-  void _syncIndexerFields(IndexerConfig indexer) {
-    _indexerUrlController.text = indexer.baseUrl;
-    _indexerKeyController.text = indexer.apiKey;
-    _indexerNameController.text = indexer.displayName;
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = context.appTheme;
@@ -56,14 +30,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final settings = ref.watch(appSettingsProvider);
     final wifiAsync = ref.watch(isOnWifiProvider);
     final sleepTimer = ref.watch(sleepTimerProvider);
-
-    if (_downloadLimitController.text.isEmpty && settings.downloadLimitKbps > 0) {
-      _downloadLimitController.text = '${settings.downloadLimitKbps}';
-    }
-    if (_uploadLimitController.text.isEmpty && settings.uploadLimitKbps > 0) {
-      _uploadLimitController.text = '${settings.uploadLimitKbps}';
-    }
-    _syncIndexerFields(settings.indexer);
 
     return Scaffold(
       backgroundColor: theme.background,
@@ -106,117 +72,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   );
             },
           ),
-          ListTile(
-            leading: Icon(Icons.dns_outlined, color: theme.accent),
-            title: const Text('Edit network sources'),
-            subtitle: Text(
-              '${ref.read(trackerManagerProvider).trackers.length} trackers · ${TrackerListConfig.sourceName}',
-              style: TextStyle(color: theme.onBackgroundMuted, fontSize: 12),
-            ),
-            onTap: () => _openTrackerEditor(context),
-          ),
-          SwitchListTile(
-            title: const Text('Auto-update trackers daily'),
-            subtitle: Text(
-              'Fetch ${TrackerListConfig.listFile} from ${TrackerListConfig.sourceName}',
-              style: TextStyle(color: theme.onBackgroundMuted, fontSize: 12),
-            ),
-            value: settings.autoUpdateTrackersDaily,
-            onChanged: (value) async {
-              await ref
-                  .read(appSettingsProvider.notifier)
-                  .setAutoUpdateTrackersDaily(value);
-              ref.read(downloadManagerProvider).updateSettings(
-                    ref.read(appSettingsProvider),
-                  );
-              if (value) {
-                final ok = await ref
-                    .read(downloadManagerProvider)
-                    .refreshTrackers(force: true);
-                if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      ok ? 'Trackers updated' : 'Could not refresh trackers',
-                    ),
-                  ),
-                );
-              }
-            },
-          ),
-          ListTile(
-            leading: Icon(Icons.update, color: theme.accent),
-            title: const Text('Refresh trackers now'),
-            subtitle: Text(
-              _formatTrackerUpdated(
-                ref.read(downloadManagerProvider).trackersLastUpdated,
-              ),
-              style: TextStyle(color: theme.onBackgroundMuted, fontSize: 12),
-            ),
-            onTap: () async {
-              final ok =
-                  await ref.read(downloadManagerProvider).refreshTrackers(force: true);
-              if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    ok ? 'Trackers updated' : 'Refresh failed — check connection',
-                  ),
-                ),
-              );
-              setState(() {});
-            },
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _downloadLimitController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Download limit (KB/s)',
-                      hintText: '0 = unlimited',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: _uploadLimitController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Upload limit (KB/s)',
-                      hintText: '0 = unlimited',
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: FilledButton(
-              onPressed: () async {
-                final down = int.tryParse(_downloadLimitController.text) ?? 0;
-                final up = int.tryParse(_uploadLimitController.text) ?? 0;
-                await ref.read(appSettingsProvider.notifier).setSpeedLimits(
-                      downloadKbps: down,
-                      uploadKbps: up,
-                    );
-                await ref.read(downloadManagerProvider).setSpeedLimits(
-                      downloadKbps: down,
-                      uploadKbps: up,
-                    );
-                if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Speed limits updated')),
-                );
-              },
-              child: const Text('Apply speed limits'),
-            ),
-          ),
           const Divider(),
           SectionHeader(title: 'Storage', theme: theme),
           FutureBuilder<String>(
@@ -243,73 +98,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             title: const Text('Reset download folder'),
             subtitle: const Text('App folder (no extra permissions needed)'),
             onTap: () => _resetDownloadFolder(context),
-          ),
-          const Divider(),
-          SectionHeader(title: 'Discover', theme: theme),
-          SwitchListTile(
-            title: const Text('Custom indexer (Jackett)'),
-            subtitle: Text(
-              settings.indexer.isConfigured
-                  ? settings.indexer.displayName
-                  : 'Add base URL and API key',
-              style: TextStyle(color: theme.onBackgroundMuted, fontSize: 12),
-            ),
-            value: settings.indexer.enabled,
-            onChanged: settings.indexer.isConfigured
-                ? (v) async {
-                    await ref.read(appSettingsProvider.notifier).setIndexer(
-                          settings.indexer.copyWith(enabled: v),
-                        );
-                    ref.invalidate(searchOrchestratorProvider);
-                  }
-                : null,
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: TextField(
-              controller: _indexerNameController,
-              decoration: const InputDecoration(labelText: 'Indexer display name'),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: TextField(
-              controller: _indexerUrlController,
-              decoration: const InputDecoration(
-                labelText: 'Indexer base URL',
-                hintText: 'http://192.168.1.10:9117',
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: TextField(
-              controller: _indexerKeyController,
-              decoration: const InputDecoration(labelText: 'API key'),
-              obscureText: true,
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: FilledButton(
-              onPressed: () async {
-                final config = IndexerConfig(
-                  enabled: true,
-                  baseUrl: _indexerUrlController.text.trim(),
-                  apiKey: _indexerKeyController.text.trim(),
-                  displayName: _indexerNameController.text.trim().isEmpty
-                      ? 'Custom Indexer'
-                      : _indexerNameController.text.trim(),
-                );
-                await ref.read(appSettingsProvider.notifier).setIndexer(config);
-                ref.invalidate(searchOrchestratorProvider);
-                if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Indexer saved')),
-                );
-              },
-              child: const Text('Save indexer'),
-            ),
           ),
           const Divider(),
           SectionHeader(title: 'Playback', theme: theme),
@@ -395,34 +183,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const SnackBar(content: Text('Could not reset download folder')),
       );
     }
-  }
-
-  Future<void> _openTrackerEditor(BuildContext context) async {
-    final manager = ref.read(trackerManagerProvider);
-    await TrackerEditorSheet.show(
-      context,
-      title: 'Global network sources',
-      initialTrackers: manager.trackers,
-      listUrl: manager.listUrl.isNotEmpty
-          ? manager.listUrl
-          : TrackerListConfig.defaultListUrl,
-      onRefreshFromUrl: (url) async {
-        await ref.read(downloadManagerProvider).setTrackerListUrl(url);
-      },
-      onSave: (trackers) async {
-        await ref.read(downloadManagerProvider).saveTrackers(trackers);
-      },
-    );
-  }
-
-  String _formatTrackerUpdated(DateTime? updated) {
-    if (updated == null) return 'Never updated';
-    final local = updated.toLocal();
-    final date =
-        '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
-    final time =
-        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
-    return 'Last updated $date $time';
   }
 
   Future<void> _openThemeBuilder(BuildContext context) async {

@@ -12,9 +12,8 @@ class AppShell extends StatelessWidget {
   int _selectedIndex(BuildContext context) {
     final location = GoRouterState.of(context).uri.path;
     return switch (location) {
-      '/discover' => 1,
-      '/downloads' => 2,
-      '/settings' => 3,
+      '/downloads' => 1,
+      '/settings' => 2,
       _ => 0,
     };
   }
@@ -35,9 +34,8 @@ class AppShell extends StatelessWidget {
         selectedIndex: selected,
         onDestinationSelected: (index) {
           final path = switch (index) {
-            1 => '/discover',
-            2 => '/downloads',
-            3 => '/settings',
+            1 => '/downloads',
+            2 => '/settings',
             _ => '/library',
           };
           logTap('shell', 'tab', path);
@@ -48,11 +46,6 @@ class AppShell extends StatelessWidget {
             icon: Icon(Icons.library_music_outlined),
             selectedIcon: Icon(Icons.library_music),
             label: 'Library',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.explore_outlined),
-            selectedIcon: Icon(Icons.explore),
-            label: 'Discover',
           ),
           NavigationDestination(
             icon: Icon(Icons.download_outlined),

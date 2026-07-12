@@ -8,7 +8,6 @@ import 'package:torrent_music/core/providers/app_settings_provider.dart';
 import 'package:torrent_music/core/theme/theme_notifier.dart';
 import 'package:torrent_music/services/audio/music_audio_handler.dart';
 import 'package:torrent_music/services/logging/app_log_service.dart';
-import 'package:torrent_music/services/p2p/tracker_manager.dart';
 import 'package:torrent_music/services/share_intent_listener.dart';
 import 'package:torrent_music/services/storage/download_directory_service.dart';
 
@@ -33,11 +32,6 @@ Future<void> main() async {
     } catch (e, st) {
       AppLog.error('main', 'Startup download path setup failed', e, st);
     }
-    final trackerManager = container.read(trackerManagerProvider);
-    await trackerManager.load();
-    await trackerManager.maybeAutoRefresh(
-      enabled: settings.autoUpdateTrackersDaily,
-    );
     await initAudioService();
 
     runApp(

@@ -5,7 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:torrent_music/core/branding/app_branding.dart';
 import 'package:torrent_music/core/router/app_router.dart';
 import 'package:torrent_music/core/theme/theme_notifier.dart';
-import 'package:torrent_music/services/p2p/download_manager.dart';
+import 'package:torrent_music/features/onboarding/permissions_screen.dart';
+import 'package:torrent_music/services/torrent/download_manager.dart';
 
 class JustAnotherMusicPlayerApp extends ConsumerWidget {
   const JustAnotherMusicPlayerApp({super.key});
@@ -28,7 +29,7 @@ class JustAnotherMusicPlayerApp extends ConsumerWidget {
   }
 }
 
-/// Persists P2P session state when the app pauses or is detached.
+/// Persists torrent session state when the app pauses or is detached.
 class AppLifecycleBridge extends ConsumerStatefulWidget {
   const AppLifecycleBridge({super.key, required this.child});
 
@@ -40,10 +41,24 @@ class AppLifecycleBridge extends ConsumerStatefulWidget {
 
 class _AppLifecycleBridgeState extends ConsumerState<AppLifecycleBridge>
     with WidgetsBindingObserver {
+  bool? _permissionsReady;
+  bool _checkingPermissions = true;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    unawaited(_checkPermissions());
+  }
+
+  Future<void> _checkPermissions() async {
+    final done = await StartupPermissions.isComplete();
+    if (mounted) {
+      setState(() {
+        _permissionsReady = done;
+        _checkingPermissions = false;
+      });
+    }
   }
 
   @override
@@ -61,5 +76,23 @@ class _AppLifecycleBridgeState extends ConsumerState<AppLifecycleBridge>
   }
 
   @override
-  Widget build(BuildContext context) => widget.child;
+  Widget build(BuildContext context) {
+    if (_checkingPermissions) {
+      return const MaterialApp(
+        home: Scaffold(
+          body: Center(child: CircularProgressIndicator()),
+        ),
+      );
+    }
+
+    if (_permissionsReady != true) {
+      return MaterialApp(
+        home: PermissionsOnboardingScreen(
+          onComplete: () => setState(() => _permissionsReady = true),
+        ),
+      );
+    }
+
+    return widget.child;
+  }
 }

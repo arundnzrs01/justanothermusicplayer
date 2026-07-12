@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:torrent_music/services/p2p/magnet_link.dart';
-import 'package:torrent_music/services/search/magnet_utils.dart';
 
 void main() {
   test('parses standard magnet', () {
@@ -31,12 +30,13 @@ void main() {
     expect(p, isNotNull);
   });
 
-  test('buildMagnetFromHash for 40 hex', () {
-    final m = buildMagnetFromHash(
+  test('builds magnet URI from parsed hash', () {
+    final parsed = MagnetLink.parse(
       '0102030405060708090a0b0c0d0e0f1011121314',
-      'Album',
     );
-    expect(m, isNotNull);
-    expect(MagnetLink.parse(m!), isNotNull);
+    expect(parsed, isNotNull);
+    final m = parsed!.toUri();
+    expect(m, contains('magnet:?xt=urn:btih:'));
+    expect(MagnetLink.parse(m), isNotNull);
   });
 }

@@ -11,7 +11,7 @@ abstract final class UxSpacing {
   static const double xxl = 48;
 }
 
-/// Minimum touch targets per Material / iOS HIG.
+/// Minimum touch targets per Material guidelines.
 abstract final class UxTouchTargets {
   static const double minimum = 48;
   static const double playButton = 68;

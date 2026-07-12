@@ -17,9 +17,8 @@ android {
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.torrentmusic.torrent_music"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // libtorrent4j (LibreTorrent engine) requires API 24+
+        minSdk = maxOf(flutter.minSdkVersion, 24)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -42,4 +41,13 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    val libtorrentVersion = "2.1.0-39"
+    implementation("org.libtorrent4j:libtorrent4j:$libtorrentVersion")
+    implementation("org.libtorrent4j:libtorrent4j-android-arm:$libtorrentVersion")
+    implementation("org.libtorrent4j:libtorrent4j-android-arm64:$libtorrentVersion")
+    implementation("org.libtorrent4j:libtorrent4j-android-x86:$libtorrentVersion")
+    implementation("org.libtorrent4j:libtorrent4j-android-x86_64:$libtorrentVersion")
 }

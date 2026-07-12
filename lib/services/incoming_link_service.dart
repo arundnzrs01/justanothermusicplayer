@@ -1,5 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:torrent_music/services/p2p/download_manager.dart';
+import 'package:torrent_music/services/torrent/download_manager.dart';
 
 /// Handles incoming magnet links, shared text, and .torrent files.
 class IncomingLinkService {
@@ -17,9 +17,7 @@ class IncomingLinkService {
     }
 
     if (trimmed.endsWith('.torrent') && trimmed.contains('/')) {
-      await _ref
-          .read(downloadManagerProvider)
-          .addTorrentFromSharedPath(trimmed);
+      await _ref.read(downloadManagerProvider).addTorrentFile(trimmed);
     }
   }
 
@@ -33,7 +31,7 @@ class IncomingLinkService {
   Future<void> handleSharedFile(String? path) async {
     if (path == null) return;
     if (path.endsWith('.torrent')) {
-      await _ref.read(downloadManagerProvider).addTorrentFromSharedPath(path);
+      await _ref.read(downloadManagerProvider).addTorrentFile(path);
     }
   }
 }
