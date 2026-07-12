@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="waveform_blue">#7EC8E3</color>
+    <color name="waveform_red">#E07A7A</color>
+    <color name="waveform_pink">#E8A0BF</color>
+    <color name="waveform_muted">#9BB8A3</color>
+    <color name="waveform_unplayed">#3A5A42</color>
+    <color name="now_playing_panel">#243824</color>
+    <color name="queue_pill_bg">#3A5A42</color>
+</resources>

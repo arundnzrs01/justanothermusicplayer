@@ -51,6 +51,7 @@ import com.google.android.material.transition.MaterialFade;
 import org.proninyaroslav.libretorrent.MainActivity;
 import org.proninyaroslav.libretorrent.R;
 import org.proninyaroslav.libretorrent.core.model.data.entity.MusicTrack;
+import org.proninyaroslav.libretorrent.core.music.AlbumArtLoader;
 import org.proninyaroslav.libretorrent.core.music.MusicPlayerManager;
 import org.proninyaroslav.libretorrent.core.utils.Utils;
 
@@ -70,6 +71,7 @@ public class NavBarFragment extends Fragment {
     private android.widget.TextView miniTitle;
     private android.widget.TextView miniArtist;
     private android.widget.TextView miniArtInitial;
+    private android.widget.ImageView miniAlbumArt;
     private android.widget.ImageButton miniPlayPause;
     private MusicPlayerManager musicPlayer;
 
@@ -202,6 +204,7 @@ public class NavBarFragment extends Fragment {
         miniTitle = root.findViewById(R.id.mini_title);
         miniArtist = root.findViewById(R.id.mini_artist);
         miniArtInitial = root.findViewById(R.id.mini_art_initial);
+        miniAlbumArt = root.findViewById(R.id.mini_album_art);
         miniPlayPause = root.findViewById(R.id.mini_play_pause);
         musicPlayer = MusicPlayerManager.getInstance(requireContext());
 
@@ -229,6 +232,14 @@ public class NavBarFragment extends Fragment {
         miniTitle.setText(track.title);
         miniArtist.setText(track.artist);
         miniArtInitial.setText(track.album.isEmpty() ? "?" : track.album.substring(0, 1).toUpperCase());
+        var bitmap = AlbumArtLoader.loadBitmap(track.path);
+        if (bitmap != null && miniAlbumArt != null) {
+            miniAlbumArt.setImageBitmap(bitmap);
+            miniArtInitial.setVisibility(View.GONE);
+        } else if (miniAlbumArt != null) {
+            miniAlbumArt.setImageDrawable(null);
+            miniArtInitial.setVisibility(View.VISIBLE);
+        }
     }
 
     private void bindMiniPlayerPlaying(@Nullable Boolean playing) {

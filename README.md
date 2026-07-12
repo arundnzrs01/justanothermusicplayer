@@ -7,12 +7,14 @@ Android torrent client forked from [LibreTorrent](https://github.com/proninyaros
 - Magnet links and `.torrent` file import
 - Real-time download progress, speeds, seeds, and peers
 - Background downloads via foreground service
-- **Music player** — scans your torrent download folder, browse by album/artist/genre/year
+- **Music player** — scans your torrent download folder, browse by album/artist/genre/year; Dribbble-style now playing with waveform scrubber and queue pill
 - Pastel Meadow dark theme with mini player + now playing screen
 - Settings grouped into **Torrent downloads** and **Music player**
 - Wi-Fi only mode, proxy support, and scheduling (from upstream)
 
 RSS feeds removed from the app (sources stashed in `stash/rss/` for future restore).
+
+Music indexing uses [Auxio](https://github.com/OxygenCobalt/Auxio) **musikr** (vendored, GPL-3.0). See `third_party/AUXIO.md`.
 
 ## Build
 

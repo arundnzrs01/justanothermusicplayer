@@ -10,8 +10,8 @@ android {
         minSdkVersion 24
         targetSdkVersion 35
         compileSdkVersion 36
-        versionCode 1000002
-        versionName '0.0.2-beta'
+        versionCode 1000003
+        versionName '0.0.3-beta'
         vectorDrawables.useSupportLibrary = true
 
         ndk {

@@ -648,6 +648,10 @@
     <string name="play">Play</string>
     <string name="previous">Previous</string>
     <string name="next">Next</string>
+    <string name="music_queue">Queue</string>
+    <string name="music_favorite">Favorite</string>
+    <string name="music_queued">Queued:</string>
+    <string name="music_queue_empty">No upcoming tracks</string>
     <string name="ascending_sort">Ascending sort</string>
     <string name="descending_sort">Descending sort</string>
     <string name="current_storage">Current storage</string>

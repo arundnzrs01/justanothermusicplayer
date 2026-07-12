@@ -20,3 +20,5 @@ dependencyResolutionManagement {
 }
 
 include ':app'
+// musikr (Auxio) vendored under musikr/ — enable when NDK taglib build is configured:
+// include ':musikr'

@@ -11,3 +11,14 @@ JAMP Torrent modifications:
 Copyright (C) 2026 JAMP contributors
 
 Licensed under GPL-3.0. See LICENSE and LICENSE.md for the full license text.
+
+---
+
+Auxio / musikr (music library indexing)
+
+This application includes musikr from Auxio
+(https://github.com/OxygenCobalt/Auxio)
+Copyright (c) 2021-2026 Alexander Capehart (OxygenCobalt) and contributors.
+
+musikr is free software licensed under the GNU General Public License
+version 3 or later (GPL-3.0).

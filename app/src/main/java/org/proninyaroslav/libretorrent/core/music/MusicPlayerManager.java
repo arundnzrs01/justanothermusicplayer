@@ -31,6 +31,7 @@ public class MusicPlayerManager implements Player.Listener {
     private final MutableLiveData<Boolean> playing = new MutableLiveData<>(false);
     private final MutableLiveData<Long> positionMs = new MutableLiveData<>(0L);
     private final MutableLiveData<Long> durationMs = new MutableLiveData<>(0L);
+    private final MutableLiveData<List<MusicTrack>> queueLive = new MutableLiveData<>(Collections.emptyList());
 
     private List<MusicTrack> queue = Collections.emptyList();
     private int queueIndex = -1;
@@ -68,6 +69,15 @@ public class MusicPlayerManager implements Player.Listener {
     }
 
     @NonNull
+    public LiveData<List<MusicTrack>> observeQueue() {
+        return queueLive;
+    }
+
+    public int getQueueIndex() {
+        return queueIndex;
+    }
+
+    @NonNull
     public LiveData<Long> observeDurationMs() {
         return durationMs;
     }
@@ -87,6 +97,7 @@ public class MusicPlayerManager implements Player.Listener {
         }
         queue = new ArrayList<>(tracks);
         queueIndex = Math.max(0, Math.min(startIndex, tracks.size() - 1));
+        queueLive.setValue(queue);
         playIndex(queueIndex);
     }
 
@@ -131,6 +142,7 @@ public class MusicPlayerManager implements Player.Listener {
         player.clearMediaItems();
         queue = Collections.emptyList();
         queueIndex = -1;
+        queueLive.setValue(Collections.emptyList());
         currentTrack.setValue(null);
         playing.setValue(false);
     }
