@@ -24,23 +24,8 @@ import android.app.Application;
 import androidx.annotation.NonNull;
 import androidx.lifecycle.AndroidViewModel;
 
-import org.proninyaroslav.libretorrent.core.RepositoryHelper;
-import org.proninyaroslav.libretorrent.core.storage.FeedRepository;
-
-import java.util.List;
-
-import io.reactivex.rxjava3.core.Flowable;
-
 public class NavBarFragmentViewModel extends AndroidViewModel {
-    private final FeedRepository feedRepo;
-
     public NavBarFragmentViewModel(@NonNull Application application) {
         super(application);
-
-        feedRepo = RepositoryHelper.getFeedRepository(application);
-    }
-
-    public Flowable<Integer> observeUnreadFeedsCount() {
-        return feedRepo.observeUnreadFeedIdList().map(List::size);
     }
 }

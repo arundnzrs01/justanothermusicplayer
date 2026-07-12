@@ -23,11 +23,11 @@
         android:id="@+id/action_scheduling_settings"
         app:destination="@id/schedulingSettingsFragment" />
     <action
-        android:id="@+id/action_feed_settings"
-        app:destination="@id/feedSettingsFragment" />
-    <action
         android:id="@+id/action_streaming_settings"
         app:destination="@id/streamingSettingsFragment" />
+    <action
+        android:id="@+id/action_music_settings"
+        app:destination="@id/musicSettingsFragment" />
 
     <fragment
         android:id="@+id/appearanceSettingsFragment"
@@ -97,27 +97,11 @@
         android:name="org.proninyaroslav.libretorrent.ui.settings.pages.SchedulingSettingsFragment"
         android:label="SchedulingSettingsFragment" />
     <fragment
-        android:id="@+id/feedSettingsFragment"
-        android:name="org.proninyaroslav.libretorrent.ui.settings.pages.FeedSettingsFragment"
-        android:label="FeedSettingsFragment">
-        <action
-            android:id="@+id/action_auto_refresh_settings"
-            app:destination="@id/feedAutoRefreshSettingsFragment"
-            app:enterAnim="?attr/navEnterAnim"
-            app:exitAnim="?attr/navExitAnim"
-            app:popEnterAnim="?attr/navPopEnterAnim"
-            app:popExitAnim="?attr/navPopExitAnim" />
-    </fragment>
-    <fragment
-        android:id="@+id/feedAutoRefreshSettingsFragment"
-        android:name="org.proninyaroslav.libretorrent.ui.settings.pages.FeedAutoRefreshSettingsFragment"
-        android:label="FeedAutoRefreshSettingsFragment">
-        <argument
-            android:name="fragment_request_key"
-            app:argType="string" />
-    </fragment>
-    <fragment
         android:id="@+id/streamingSettingsFragment"
         android:name="org.proninyaroslav.libretorrent.ui.settings.pages.StreamingSettingsFragment"
         android:label="StreamingSettingsFragment" />
+    <fragment
+        android:id="@+id/musicSettingsFragment"
+        android:name="org.proninyaroslav.libretorrent.ui.settings.pages.MusicSettingsFragment"
+        android:label="MusicSettingsFragment" />
 </navigation>

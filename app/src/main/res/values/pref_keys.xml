@@ -9,6 +9,10 @@
     <string name="pref_key_limitations_settings" translatable="false">pref_key_limitations_settings</string>
     <string name="pref_key_scheduling_settings" translatable="false">pref_key_scheduling_settings</string>
     <string name="pref_key_feed_settings" translatable="false">pref_key_feed_settings</string>
+    <string name="pref_key_music_settings" translatable="false">pref_key_music_settings</string>
+    <string name="pref_key_music_library_folder" translatable="false">pref_key_music_library_folder</string>
+    <string name="pref_key_music_rescan" translatable="false">pref_key_music_rescan</string>
+    <string name="pref_key_music_auto_scan" translatable="false">pref_key_music_auto_scan</string>
     <string name="pref_key_streaming_settings" translatable="false">pref_key_streaming_settings</string>
 
     <!-- Main activity local preferences -->

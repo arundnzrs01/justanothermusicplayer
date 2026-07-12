@@ -26,8 +26,6 @@ import androidx.annotation.NonNull;
 import org.proninyaroslav.libretorrent.core.settings.SettingsRepository;
 import org.proninyaroslav.libretorrent.core.settings.SettingsRepositoryImpl;
 import org.proninyaroslav.libretorrent.core.storage.AppDatabase;
-import org.proninyaroslav.libretorrent.core.storage.FeedRepository;
-import org.proninyaroslav.libretorrent.core.storage.FeedRepositoryImpl;
 import org.proninyaroslav.libretorrent.core.storage.TagRepository;
 import org.proninyaroslav.libretorrent.core.storage.TagRepositoryImpl;
 import org.proninyaroslav.libretorrent.core.storage.TorrentRepository;
@@ -35,7 +33,6 @@ import org.proninyaroslav.libretorrent.core.storage.TorrentRepositoryImpl;
 
 public class RepositoryHelper
 {
-    private static FeedRepositoryImpl feedRepo;
     private static TorrentRepositoryImpl torrentRepo;
     private static SettingsRepositoryImpl settingsRepo;
     private static TagRepository tagRepo;
@@ -47,15 +44,6 @@ public class RepositoryHelper
                     AppDatabase.getInstance(appContext));
 
         return torrentRepo;
-    }
-
-    public synchronized static FeedRepository getFeedRepository(@NonNull Context appContext)
-    {
-        if (feedRepo == null)
-            feedRepo = new FeedRepositoryImpl(appContext,
-                    AppDatabase.getInstance(appContext));
-
-        return feedRepo;
     }
 
     public synchronized static SettingsRepository getSettingsRepository(@NonNull Context appContext)

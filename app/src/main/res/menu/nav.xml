@@ -6,9 +6,9 @@
         android:title="@string/torrents" />
 
     <item
-        android:id="@+id/feed_nav"
-        android:icon="@drawable/ic_rss_feed_24px"
-        android:title="@string/feed" />
+        android:id="@+id/music_nav"
+        android:icon="@drawable/ic_music_note_24px"
+        android:title="@string/music" />
 
     <item
         android:id="@+id/settings_nav"

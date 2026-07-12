@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+    <Preference
+        android:key="@string/pref_key_music_library_folder"
+        android:persistent="false"
+        android:selectable="false"
+        android:title="@string/music_library_folder_title"
+        android:summary="@string/music_library_folder_summary" />
+
+    <Preference
+        android:key="@string/pref_key_music_rescan"
+        android:persistent="false"
+        android:title="@string/music_rescan_now" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="@string/pref_key_music_auto_scan"
+        android:summary="@string/music_auto_scan_summary"
+        android:title="@string/music_auto_scan_title" />
+</PreferenceScreen>

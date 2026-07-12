@@ -50,7 +50,8 @@ class DatabaseMigration
                 MIGRATION_5_6,
                 MIGRATION_6_7,
                 MIGRATION_7_8,
-                MIGRATION_8_9
+                MIGRATION_8_9,
+                MIGRATION_9_10
         };
     }
 
@@ -103,6 +104,28 @@ class DatabaseMigration
         @Override
         public void migrate(@NonNull SupportSQLiteDatabase database) {
             database.execSQL("ALTER TABLE `Torrent` ADD COLUMN `sequentialDownload` INTEGER NOT NULL DEFAULT 0");
+        }
+    };
+
+    static final Migration MIGRATION_9_10 = new Migration(9, 10) {
+        @Override
+        public void migrate(@NonNull SupportSQLiteDatabase database) {
+            database.execSQL("CREATE TABLE IF NOT EXISTS `music_tracks` (" +
+                    "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`path` TEXT NOT NULL, " +
+                    "`title` TEXT NOT NULL, " +
+                    "`artist` TEXT NOT NULL, " +
+                    "`album` TEXT NOT NULL, " +
+                    "`genre` TEXT, " +
+                    "`year` INTEGER, " +
+                    "`durationMs` INTEGER NOT NULL, " +
+                    "`trackNumber` INTEGER, " +
+                    "`dateAdded` INTEGER NOT NULL)");
+            database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_music_tracks_path` ON `music_tracks` (`path`)");
+            database.execSQL("CREATE INDEX IF NOT EXISTS `index_music_tracks_album` ON `music_tracks` (`album`)");
+            database.execSQL("CREATE INDEX IF NOT EXISTS `index_music_tracks_artist` ON `music_tracks` (`artist`)");
+            database.execSQL("CREATE INDEX IF NOT EXISTS `index_music_tracks_genre` ON `music_tracks` (`genre`)");
+            database.execSQL("CREATE INDEX IF NOT EXISTS `index_music_tracks_year` ON `music_tracks` (`year`)");
         }
     };
 

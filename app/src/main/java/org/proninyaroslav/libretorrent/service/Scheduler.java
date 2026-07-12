@@ -26,19 +26,11 @@ import android.content.Intent;
 import android.os.Build;
 
 import androidx.annotation.NonNull;
-import androidx.work.Constraints;
-import androidx.work.Data;
-import androidx.work.ExistingPeriodicWorkPolicy;
-import androidx.work.NetworkType;
-import androidx.work.PeriodicWorkRequest;
 import androidx.work.WorkManager;
 
-import org.proninyaroslav.libretorrent.core.RepositoryHelper;
-import org.proninyaroslav.libretorrent.core.settings.SettingsRepository;
 import org.proninyaroslav.libretorrent.receiver.SchedulerReceiver;
 
 import java.util.Calendar;
-import java.util.concurrent.TimeUnit;
 
 public class Scheduler {
     public static final String SCHEDULER_WORK_START_APP = "scheduler_work_start_app";
@@ -110,33 +102,7 @@ public class Scheduler {
      */
 
     public static void runPeriodicalRefreshFeeds(@NonNull Context appContext, long interval) {
-        Data data = new Data.Builder()
-                .putString(FeedFetcherWorker.TAG_ACTION, FeedFetcherWorker.ACTION_FETCH_ALL_CHANNELS)
-                .build();
-        PeriodicWorkRequest work = new PeriodicWorkRequest.Builder(FeedFetcherWorker.class,
-                interval,
-                TimeUnit.MILLISECONDS)
-                .setInputData(data)
-                .setConstraints(getRefreshFeedsConstraints(appContext))
-                .addTag(SCHEDULER_WORK_PERIODICAL_REFRESH_FEEDS)
-                .build();
-
-        WorkManager.getInstance(appContext).enqueueUniquePeriodicWork(SCHEDULER_WORK_PERIODICAL_REFRESH_FEEDS,
-                ExistingPeriodicWorkPolicy.UPDATE, work);
-    }
-
-    private static Constraints getRefreshFeedsConstraints(Context appContext) {
-        SettingsRepository pref = RepositoryHelper.getSettingsRepository(appContext);
-
-        NetworkType netType = NetworkType.CONNECTED;
-        if (pref.autoRefreshFeedsEnableRoaming())
-            netType = NetworkType.NOT_ROAMING;
-        if (pref.autoRefreshFeedsUnmeteredConnectionsOnly())
-            netType = NetworkType.UNMETERED;
-
-        return new Constraints.Builder()
-                .setRequiredNetworkType(netType)
-                .build();
+        cancelPeriodicalRefreshFeeds(appContext);
     }
 
     public static void cancelPeriodicalRefreshFeeds(@NonNull Context appContext) {

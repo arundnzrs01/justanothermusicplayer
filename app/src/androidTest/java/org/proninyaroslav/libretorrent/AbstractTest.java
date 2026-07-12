@@ -28,8 +28,6 @@ import org.junit.Rule;
 import org.proninyaroslav.libretorrent.core.model.TorrentEngine;
 import org.proninyaroslav.libretorrent.core.model.TorrentInfoProvider;
 import org.proninyaroslav.libretorrent.core.storage.AppDatabase;
-import org.proninyaroslav.libretorrent.core.storage.FeedRepository;
-import org.proninyaroslav.libretorrent.core.storage.FeedRepositoryImpl;
 import org.proninyaroslav.libretorrent.core.storage.TagRepository;
 import org.proninyaroslav.libretorrent.core.storage.TagRepositoryImpl;
 import org.proninyaroslav.libretorrent.core.storage.TorrentRepository;
@@ -53,7 +51,6 @@ public class AbstractTest
     protected TorrentEngine engine;
     protected TorrentInfoProvider stateProvider;
     protected TorrentRepository torrentRepo;
-    protected FeedRepository feedRepo;
     protected FileSystemFacade fs;
     protected TagRepository tagRepo;
 
@@ -66,7 +63,6 @@ public class AbstractTest
                 .allowMainThreadQueries()
                 .build();
         torrentRepo = new TorrentRepositoryImpl(context, db);
-        feedRepo = new FeedRepositoryImpl(context, db);
         engine = TorrentEngine.getInstance(context);
         tagRepo = new TagRepositoryImpl(db);
         stateProvider = TorrentInfoProvider.getInstance(engine, tagRepo);

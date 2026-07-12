@@ -48,14 +48,13 @@ import com.google.android.material.navigation.NavigationView;
 import com.google.android.material.navigationrail.NavigationRailView;
 import com.google.android.material.transition.MaterialFade;
 
-import org.proninyaroslav.libretorrent.FeedNavDirections;
 import org.proninyaroslav.libretorrent.MainActivity;
 import org.proninyaroslav.libretorrent.R;
+import org.proninyaroslav.libretorrent.core.model.data.entity.MusicTrack;
+import org.proninyaroslav.libretorrent.core.music.MusicPlayerManager;
 import org.proninyaroslav.libretorrent.core.utils.Utils;
 
-import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
-import io.reactivex.rxjava3.disposables.CompositeDisposable;
-import io.reactivex.rxjava3.schedulers.Schedulers;
+import com.google.android.material.card.MaterialCardView;
 
 public class NavBarFragment extends Fragment {
     private static final String TAG = NavBarFragment.class.getSimpleName();
@@ -67,7 +66,12 @@ public class NavBarFragment extends Fragment {
     private DrawerLayout drawerLayout;
     private NavigationView navigationView;
     private NavBarFragmentViewModel viewModel;
-    private final CompositeDisposable disposables = new CompositeDisposable();
+    private MaterialCardView miniPlayerCard;
+    private android.widget.TextView miniTitle;
+    private android.widget.TextView miniArtist;
+    private android.widget.TextView miniArtInitial;
+    private android.widget.ImageButton miniPlayPause;
+    private MusicPlayerManager musicPlayer;
 
     public void setNavRailHeaderView(@NonNull View view) {
         if (!isAdded() || navRail == null) {
@@ -149,6 +153,8 @@ public class NavBarFragment extends Fragment {
             NavigationUI.setupWithNavController(bottomNav, navController);
         }
 
+        setupMiniPlayer(view);
+
         activity.getOnBackPressedDispatcher().addCallback(getViewLifecycleOwner(), new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
@@ -184,14 +190,54 @@ public class NavBarFragment extends Fragment {
     }
 
     private void handleUri(Uri uri, @Nullable String mimeType) {
-        if (mimeType != null && Utils.matchFeedMimeType(mimeType)
-                || uri.getPath() != null && Utils.matchFeedFilePath(uri.getPath())) {
-            var action = FeedNavDirections.actionAddFeedDialog(uri);
-            navController.navigate(action);
-        } else {
-            var action = NavBarFragmentDirections.actionAddTorrent(uri);
-            activity.getRootNavController().navigate(action);
+        var action = NavBarFragmentDirections.actionAddTorrent(uri);
+        activity.getRootNavController().navigate(action);
+    }
+
+    private void setupMiniPlayer(@NonNull View root) {
+        miniPlayerCard = root.findViewById(R.id.mini_player_card);
+        if (miniPlayerCard == null) {
+            return;
         }
+        miniTitle = root.findViewById(R.id.mini_title);
+        miniArtist = root.findViewById(R.id.mini_artist);
+        miniArtInitial = root.findViewById(R.id.mini_art_initial);
+        miniPlayPause = root.findViewById(R.id.mini_play_pause);
+        musicPlayer = MusicPlayerManager.getInstance(requireContext());
+
+        miniPlayerCard.setOnClickListener(v -> {
+            if (navController != null && musicPlayer.hasActiveTrack()) {
+                navController.navigate(R.id.music_nav);
+                navController.navigate(R.id.nowPlayingFragment);
+            }
+        });
+        miniPlayPause.setOnClickListener(v -> musicPlayer.togglePlayPause());
+
+        musicPlayer.observeCurrentTrack().observe(getViewLifecycleOwner(), this::bindMiniPlayerTrack);
+        musicPlayer.observePlaying().observe(getViewLifecycleOwner(), this::bindMiniPlayerPlaying);
+    }
+
+    private void bindMiniPlayerTrack(@Nullable MusicTrack track) {
+        if (miniPlayerCard == null) {
+            return;
+        }
+        if (track == null) {
+            miniPlayerCard.setVisibility(View.GONE);
+            return;
+        }
+        miniPlayerCard.setVisibility(View.VISIBLE);
+        miniTitle.setText(track.title);
+        miniArtist.setText(track.artist);
+        miniArtInitial.setText(track.album.isEmpty() ? "?" : track.album.substring(0, 1).toUpperCase());
+    }
+
+    private void bindMiniPlayerPlaying(@Nullable Boolean playing) {
+        if (miniPlayPause == null) {
+            return;
+        }
+        miniPlayPause.setImageResource(Boolean.TRUE.equals(playing)
+                ? R.drawable.ic_pause_24px
+                : R.drawable.ic_play_arrow_24px);
     }
 
     private void animateHeaderTransition() {
@@ -208,39 +254,10 @@ public class NavBarFragment extends Fragment {
     @Override
     public void onStart() {
         super.onStart();
-
-        subscribeUnreadFeedsBadge();
-    }
-
-    private void subscribeUnreadFeedsBadge() {
-        disposables.add(viewModel.observeUnreadFeedsCount()
-                .subscribeOn(Schedulers.io())
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribe((count) -> setBadge(R.id.feed_nav, count),
-                        (Throwable t) -> Log.e(TAG, "Getting unread feed list error: " +
-                                Log.getStackTraceString(t)))
-        );
-    }
-
-    private void setBadge(@IdRes int menuId, int count) {
-        var navBar = getNavigationBarView();
-        if (navBar == null) {
-            return;
-        }
-        var badge = navBar.getOrCreateBadge(menuId);
-        if (count == 0) {
-            badge.setVisible(false);
-            badge.clearNumber();
-        } else {
-            badge.setVisible(true);
-            badge.setNumber(count);
-        }
     }
 
     @Override
     public void onStop() {
         super.onStop();
-
-        disposables.clear();
     }
 }

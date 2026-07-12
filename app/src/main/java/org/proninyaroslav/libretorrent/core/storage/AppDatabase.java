@@ -31,12 +31,14 @@ import org.proninyaroslav.libretorrent.core.model.data.entity.FastResume;
 import org.proninyaroslav.libretorrent.core.model.data.entity.FeedChannel;
 import org.proninyaroslav.libretorrent.core.model.data.entity.FeedItem;
 import org.proninyaroslav.libretorrent.core.model.data.entity.TagInfo;
+import org.proninyaroslav.libretorrent.core.model.data.entity.MusicTrack;
 import org.proninyaroslav.libretorrent.core.model.data.entity.Torrent;
 import org.proninyaroslav.libretorrent.core.model.data.entity.TorrentTagInfo;
 import org.proninyaroslav.libretorrent.core.storage.converter.UriConverter;
 import org.proninyaroslav.libretorrent.core.storage.dao.FastResumeDao;
 import org.proninyaroslav.libretorrent.core.storage.dao.FeedDao;
 import org.proninyaroslav.libretorrent.core.storage.dao.TagInfoDao;
+import org.proninyaroslav.libretorrent.core.storage.dao.MusicDao;
 import org.proninyaroslav.libretorrent.core.storage.dao.TorrentDao;
 
 @Database(
@@ -47,8 +49,9 @@ import org.proninyaroslav.libretorrent.core.storage.dao.TorrentDao;
                 FeedItem.class,
                 TagInfo.class,
                 TorrentTagInfo.class,
+                MusicTrack.class,
         },
-        version = 9
+        version = 10
 )
 @TypeConverters({UriConverter.class})
 
@@ -65,6 +68,8 @@ public abstract class AppDatabase extends RoomDatabase
     public abstract FeedDao feedDao();
 
     public abstract TagInfoDao tagInfoDao();
+
+    public abstract MusicDao musicDao();
 
     public static AppDatabase getInstance(@NonNull Context appContext)
     {

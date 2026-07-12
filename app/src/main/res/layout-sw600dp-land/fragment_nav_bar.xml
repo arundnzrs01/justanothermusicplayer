@@ -22,12 +22,24 @@
             app:menu="@menu/nav"
             app:menuGravity="center" />
 
-        <androidx.fragment.app.FragmentContainerView
-            android:id="@+id/nav_bar_host_fragment"
-            android:name="androidx.navigation.fragment.NavHostFragment"
-            android:layout_width="match_parent"
+        <LinearLayout
+            android:layout_width="0dp"
             android:layout_height="match_parent"
-            app:navGraph="@navigation/nav_bar_graph" />
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <androidx.fragment.app.FragmentContainerView
+                android:id="@+id/nav_bar_host_fragment"
+                android:name="androidx.navigation.fragment.NavHostFragment"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                app:navGraph="@navigation/nav_bar_graph" />
+
+            <include
+                android:id="@+id/mini_player"
+                layout="@layout/layout_mini_player" />
+        </LinearLayout>
     </LinearLayout>
 
     <com.google.android.material.navigation.NavigationView

@@ -26,6 +26,9 @@ import android.view.View;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.preference.Preference;
+import androidx.preference.PreferenceCategory;
+import androidx.preference.PreferenceGroup;
 import androidx.preference.PreferenceScreen;
 
 import org.proninyaroslav.libretorrent.R;
@@ -87,16 +90,7 @@ public class SettingsHeaderFragment extends CustomPreferenceFragment {
             activity = (AppCompatActivity) requireActivity();
         }
 
-        for (var i = 0; i < getPreferenceScreen().getPreferenceCount(); i++) {
-            var preference = getPreferenceScreen().getPreference(i);
-            preference.setOnPreferenceClickListener((p) -> {
-                markAsOpen(p.getKey());
-                var bundle = new Bundle();
-                bundle.putString(KEY_RESULT_PREFERENCE_KEY, p.getKey());
-                getParentFragmentManager().setFragmentResult(KEY_OPEN_REFERENCE_REQUEST, bundle);
-                return true;
-            });
-        }
+        bindPreferenceClickListeners(getPreferenceScreen());
 
         super.onViewCreated(view, savedInstanceState);
     }
@@ -107,6 +101,23 @@ public class SettingsHeaderFragment extends CustomPreferenceFragment {
         adapter = new SettingsHeaderAdapter(preferenceScreen);
         adapter.setSelectable(Utils.isTwoPane(activity));
         return adapter;
+    }
+
+    private void bindPreferenceClickListeners(@NonNull PreferenceGroup group) {
+        for (var i = 0; i < group.getPreferenceCount(); i++) {
+            var preference = group.getPreference(i);
+            if (preference instanceof PreferenceCategory category) {
+                bindPreferenceClickListeners(category);
+            } else if (preference.getKey() != null) {
+                preference.setOnPreferenceClickListener((p) -> {
+                    markAsOpen(p.getKey());
+                    var bundle = new Bundle();
+                    bundle.putString(KEY_RESULT_PREFERENCE_KEY, p.getKey());
+                    getParentFragmentManager().setFragmentResult(KEY_OPEN_REFERENCE_REQUEST, bundle);
+                    return true;
+                });
+            }
+        }
     }
 
     private void markAsOpen(String key) {

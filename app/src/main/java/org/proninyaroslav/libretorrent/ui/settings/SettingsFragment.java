@@ -39,8 +39,8 @@ import org.proninyaroslav.libretorrent.R;
 import org.proninyaroslav.libretorrent.databinding.FragmentSettingsHeaderBinding;
 import org.proninyaroslav.libretorrent.ui.settings.pages.AppearanceSettingsFragmentDirections;
 import org.proninyaroslav.libretorrent.ui.settings.pages.BehaviorSettingsFragmentDirections;
-import org.proninyaroslav.libretorrent.ui.settings.pages.FeedSettingsFragmentDirections;
 import org.proninyaroslav.libretorrent.ui.settings.pages.LimitationsSettingsFragmentDirections;
+import org.proninyaroslav.libretorrent.ui.settings.pages.MusicSettingsFragmentDirections;
 import org.proninyaroslav.libretorrent.ui.settings.pages.NetworkSettingsFragmentDirections;
 import org.proninyaroslav.libretorrent.ui.settings.pages.SchedulingSettingsFragmentDirections;
 import org.proninyaroslav.libretorrent.ui.settings.pages.StorageSettingsFragmentDirections;
@@ -141,10 +141,10 @@ public class SettingsFragment extends AbstractListDetailFragment {
             action = LimitationsSettingsFragmentDirections.actionLimitationSettings();
         } else if (key.equals(getString(R.string.pref_key_scheduling_settings))) {
             action = SchedulingSettingsFragmentDirections.actionSchedulingSettings();
-        } else if (key.equals(getString(R.string.pref_key_feed_settings))) {
-            action = FeedSettingsFragmentDirections.actionFeedSettings();
         } else if (key.equals(getString(R.string.pref_key_streaming_settings))) {
             action = StreamingSettingsFragmentDirections.actionStreamingSettings();
+        } else if (key.equals(getString(R.string.pref_key_music_settings))) {
+            action = MusicSettingsFragmentDirections.actionMusicSettings();
         } else {
             throw new IllegalArgumentException("Unknown preference key: " + key);
         }

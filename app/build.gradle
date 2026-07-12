@@ -10,8 +10,8 @@ android {
         minSdkVersion 24
         targetSdkVersion 35
         compileSdkVersion 36
-        versionCode 1000001
-        versionName '0.0.1-beta'
+        versionCode 1000002
+        versionName '0.0.2-beta'
         vectorDrawables.useSupportLibrary = true
 
         ndk {
@@ -146,6 +146,7 @@ dependencies {
     annotationProcessor libs.room.compiler /* For schemas import */
     implementation libs.swiperefreshlayout
     implementation libs.work.runtime
+    implementation libs.media3.exoplayer
     implementation libs.material
     implementation libs.viewpager2
     implementation libs.lifecycle.viewmodel
