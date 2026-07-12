@@ -63,6 +63,23 @@ class P2pEngine {
 
   bool hasHandle(String id) => _appToTorrent.containsKey(id);
 
+  double getProgressForAppId(String appId) {
+    if (!_useNative || _engine == null) return 0;
+    final torrentId = _appToTorrent[appId];
+    if (torrentId == null) return 0;
+    return _engine!.torrents[torrentId]?.progress ?? 0;
+  }
+
+  bool hasMetadataForAppId(String appId) {
+    if (!_useNative || _engine == null) return false;
+    final torrentId = _appToTorrent[appId];
+    if (torrentId == null) return false;
+    return _engine!.torrents[torrentId]?.hasMetadata ?? false;
+  }
+
+  bool get hasPostMetadataApi =>
+      _useNative && (_engine?.hasPostMetadataApi ?? false);
+
   Future<void> setDownloadDirectory(String path) async {
     if (!await _verifyWritable(path)) {
       throw StateError('Download directory is not writable: $path');
@@ -207,7 +224,12 @@ class P2pEngine {
       final torrentId = _appToTorrent[id];
       if (torrentId == null) return;
       try {
-        _engine!.resumeTorrent(torrentId);
+        if (_engine!.hasPostMetadataApi) {
+          _engine!.beginPieceDownloadNative(torrentId);
+        } else {
+          _engine!.resumeTorrent(torrentId);
+        }
+        _audioPrioritized.remove(torrentId);
         prioritizeAudioFiles(_engine!, torrentId);
       } catch (e, st) {
         AppLog.error('P2pEngine', 'beginPieceDownload failed', e, st);
@@ -339,6 +361,22 @@ class P2pEngine {
     _trackers = trackers;
   }
 
+  Future<void> injectTrackers(String appId, List<String> trackers) async {
+    if (!_useNative || _engine == null || trackers.isEmpty) return;
+    final torrentId = _appToTorrent[appId];
+    if (torrentId == null) return;
+    try {
+      if (_engine!.hasPostMetadataApi) {
+        _engine!.addTrackers(torrentId, trackers);
+        _engine!.forceReannounce(torrentId);
+      } else {
+        await reannounceTorrent(appId);
+      }
+    } catch (e, st) {
+      AppLog.error('P2pEngine', 'injectTrackers failed', e, st);
+    }
+  }
+
   Future<void> reannounceAll() async {
     if (_useNative && _engine != null) {
       for (final entry in _appToTorrent.entries) {
@@ -408,7 +446,8 @@ class P2pEngine {
             ? kDownloadingMetadataLabel
             : torrentPhaseLabel(info.state);
 
-        final completed = isTorrentComplete(info);
+        final completed = isTorrentComplete(info) &&
+            (!metadataOnly || info.progress >= 0.99);
         List<FileInfo> files = const [];
         if (completed && info.hasMetadata && _engine != null) {
           try {

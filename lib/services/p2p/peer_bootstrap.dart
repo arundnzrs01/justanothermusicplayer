@@ -15,6 +15,30 @@ const kFallbackAnnounceUrls = [
 /// Per Stack Overflow / BEP-5: a magnet with only an infohash can work via DHT,
 /// but embedded `tr=` URLs and fallback trackers improve first-peer discovery.
 class PeerBootstrap {
+  /// Collect tracker URLs for post-metadata injection (not embedded in magnet URI).
+  static List<String> collectTrackers({
+    required int embeddedCount,
+    required List<String> globalTrackers,
+    List<String> perDownloadTrackers = const [],
+  }) {
+    final extras = <String>[];
+    if (embeddedCount == 0) {
+      extras.addAll(kFallbackAnnounceUrls);
+    }
+    extras.addAll(globalTrackers);
+    extras.addAll(perDownloadTrackers);
+
+    final seen = <String>{};
+    final out = <String>[];
+    for (final url in extras) {
+      final trimmed = url.trim();
+      if (trimmed.isEmpty || seen.contains(trimmed)) continue;
+      seen.add(trimmed);
+      out.add(trimmed);
+    }
+    return out;
+  }
+
   static String prepareMagnet(
     String magnet, {
     required List<String> globalTrackers,
@@ -24,15 +48,11 @@ class PeerBootstrap {
     if (parsed == null) return magnet.trim();
 
     final embedded = parsed.trackers.length;
-    final extras = <String>[];
-
-    // No embedded trackers → add fallbacks + global list (DHT alone can be slow).
-    if (embedded == 0) {
-      extras.addAll(kFallbackAnnounceUrls);
-    }
-
-    extras.addAll(globalTrackers);
-    extras.addAll(perDownloadTrackers);
+    final extras = collectTrackers(
+      embeddedCount: embedded,
+      globalTrackers: globalTrackers,
+      perDownloadTrackers: perDownloadTrackers,
+    );
 
     // Magnets with trackers already: add fewer extras (libtorrent also injects).
     final maxTotal = embedded >= 2 ? embedded + 3 : 10;

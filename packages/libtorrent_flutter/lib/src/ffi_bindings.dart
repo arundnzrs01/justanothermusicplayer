@@ -117,6 +117,17 @@ typedef LtResumeTorrent = void Function(Pointer<LtSessionOpaque>, int);
 typedef _RecheckTorrentN = Void Function(Pointer<LtSessionOpaque>, Int64);
 typedef LtRecheckTorrent = void Function(Pointer<LtSessionOpaque>, int);
 
+typedef _AddTrackersN = Void Function(
+    Pointer<LtSessionOpaque>, Int64, Pointer<Pointer<Utf8>>, Int32);
+typedef LtAddTrackers = void Function(
+    Pointer<LtSessionOpaque>, int, Pointer<Pointer<Utf8>>, int);
+
+typedef _ForceReannounceN = Void Function(Pointer<LtSessionOpaque>, Int64);
+typedef LtForceReannounce = void Function(Pointer<LtSessionOpaque>, int);
+
+typedef _BeginPieceDownloadN = Int32 Function(Pointer<LtSessionOpaque>, Int64);
+typedef LtBeginPieceDownload = int Function(Pointer<LtSessionOpaque>, int);
+
 typedef _RequestSaveResumeDataN = Void Function(Pointer<LtSessionOpaque>, Int64);
 typedef LtRequestSaveResumeData = void Function(Pointer<LtSessionOpaque>, int);
 
@@ -291,6 +302,9 @@ class TorrentBridgeBindings {
   late final LtPauseTorrent       pauseTorrent;
   late final LtResumeTorrent      resumeTorrent;
   late final LtRecheckTorrent     recheckTorrent;
+  late final LtAddTrackers        addTrackers;
+  late final LtForceReannounce    forceReannounce;
+  late final LtBeginPieceDownload beginPieceDownload;
   late final LtRequestSaveResumeData requestSaveResumeData;
   late final LtTakeResumeData     takeResumeData;
   late final LtAddMagnetWithResume  addMagnetWithResume;
@@ -299,6 +313,8 @@ class TorrentBridgeBindings {
   late final LtAbortSession         abortSession;
   /// True when vendored native lib includes resume/session FFI (source build).
   final bool hasExtendedApi;
+  /// True when post-metadata torrent control FFI is available.
+  final bool hasPostMetadataApi;
   late final LtGetTorrentCount    getTorrentCount;
   late final LtGetAllStatuses     getAllStatuses;
   late final LtGetStatus          getStatus;
@@ -319,7 +335,9 @@ class TorrentBridgeBindings {
   late final LtLastError          lastError;
   late final LtVersion            version;
 
-  TorrentBridgeBindings(this._lib) : hasExtendedApi = _loadExtendedApi(_lib) {
+  TorrentBridgeBindings(this._lib)
+      : hasExtendedApi = _loadExtendedApi(_lib),
+        hasPostMetadataApi = _loadPostMetadataApi(_lib) {
     createSession       = _lib.lookup<NativeFunction<_CreateSessionN>>('lt_create_session').asFunction<LtCreateSession>();
     setSslCertPath      = _lib.lookup<NativeFunction<_SetSslCertPathN>>('lt_set_ssl_cert_path').asFunction<LtSetSslCertPath>();
     destroySession      = _lib.lookup<NativeFunction<_DestroySessionN>>('lt_destroy_session').asFunction<LtDestroySession>();
@@ -331,6 +349,14 @@ class TorrentBridgeBindings {
     pauseTorrent        = _lib.lookup<NativeFunction<_PauseTorrentN>>('lt_pause_torrent').asFunction<LtPauseTorrent>();
     resumeTorrent       = _lib.lookup<NativeFunction<_ResumeTorrentN>>('lt_resume_torrent').asFunction<LtResumeTorrent>();
     recheckTorrent      = _lib.lookup<NativeFunction<_RecheckTorrentN>>('lt_recheck_torrent').asFunction<LtRecheckTorrent>();
+    addTrackers         = _noopAddTrackers;
+    forceReannounce     = _noopForceReannounce;
+    beginPieceDownload  = _noopBeginPieceDownload;
+    if (hasPostMetadataApi) {
+      addTrackers       = _lib.lookup<NativeFunction<_AddTrackersN>>('lt_add_trackers').asFunction<LtAddTrackers>();
+      forceReannounce   = _lib.lookup<NativeFunction<_ForceReannounceN>>('lt_force_reannounce').asFunction<LtForceReannounce>();
+      beginPieceDownload = _lib.lookup<NativeFunction<_BeginPieceDownloadN>>('lt_begin_piece_download').asFunction<LtBeginPieceDownload>();
+    }
     requestSaveResumeData = _noopRequestSaveResumeData;
     takeResumeData      = _noopTakeResumeData;
     addMagnetWithResume = _noopAddMagnetWithResume;
@@ -377,6 +403,21 @@ bool _loadExtendedApi(DynamicLibrary lib) {
     return false;
   }
 }
+
+bool _loadPostMetadataApi(DynamicLibrary lib) {
+  try {
+    lib.lookup<NativeFunction<_BeginPieceDownloadN>>('lt_begin_piece_download');
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+void _noopAddTrackers(Pointer<LtSessionOpaque> session, int id, Pointer<Pointer<Utf8>> urls, int count) {}
+
+void _noopForceReannounce(Pointer<LtSessionOpaque> session, int id) {}
+
+int _noopBeginPieceDownload(Pointer<LtSessionOpaque> session, int id) => 0;
 
 void _noopRequestSaveResumeData(Pointer<LtSessionOpaque> session, int id) {}
 

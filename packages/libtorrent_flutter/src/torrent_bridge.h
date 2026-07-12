@@ -142,6 +142,10 @@ TORRENT_API void lt_remove_torrent(lt_session_t session,
 TORRENT_API void lt_pause_torrent(lt_session_t session, lt_torrent_id id);
 TORRENT_API void lt_resume_torrent(lt_session_t session, lt_torrent_id id);
 TORRENT_API void lt_recheck_torrent(lt_session_t session, lt_torrent_id id);
+TORRENT_API void lt_add_trackers(lt_session_t session, lt_torrent_id id,
+                                 const char** urls, int count);
+TORRENT_API void lt_force_reannounce(lt_session_t session, lt_torrent_id id);
+TORRENT_API int  lt_begin_piece_download(lt_session_t session, lt_torrent_id id);
 
 /* status queries */
 TORRENT_API int lt_get_torrent_count(lt_session_t session);

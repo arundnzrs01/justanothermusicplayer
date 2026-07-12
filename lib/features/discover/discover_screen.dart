@@ -137,7 +137,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     }
 
     try {
-      final ok = await ref.read(downloadManagerProvider).addMagnet(
+      final addResult = await ref.read(downloadManagerProvider).addMagnet(
             magnet,
             displayName: result.title,
             sourceName: result.sourceName,
@@ -148,7 +148,11 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              ok ? 'Added to downloads — fetching metadata' : 'Failed to start download',
+              !addResult.ok
+                  ? 'Failed to start download'
+                  : addResult.continuingExisting
+                      ? 'Continuing existing download'
+                      : 'Added to downloads — fetching metadata',
             ),
           ),
         );
@@ -199,15 +203,20 @@ class _AddLinkSheetState extends ConsumerState<_AddLinkSheet> {
   Timer? _debounce;
   MagnetMetadataPreview? _preview;
   String? _prefetchId;
+  late final DownloadManager _downloads;
+
+  @override
+  void initState() {
+    super.initState();
+    _downloads = ref.read(downloadManagerProvider);
+  }
 
   @override
   void dispose() {
     _debounce?.cancel();
     _prefetchSub?.cancel();
-    if (_prefetchId != null) {
-      unawaited(
-        ref.read(downloadManagerProvider).cancelMetadataPrefetch(_prefetchId!),
-      );
+    if (_prefetchId != null && _preview?.continuingExisting != true) {
+      unawaited(_downloads.cancelMetadataPrefetch(_prefetchId!));
     }
     _magnetController.dispose();
     super.dispose();
@@ -228,7 +237,7 @@ class _AddLinkSheetState extends ConsumerState<_AddLinkSheet> {
     await _prefetchSub?.cancel();
     _prefetchSub = null;
     if (_prefetchId != null) {
-      await ref.read(downloadManagerProvider).cancelMetadataPrefetch(_prefetchId!);
+      await _downloads.cancelMetadataPrefetch(_prefetchId!);
       _prefetchId = null;
     }
 
@@ -237,7 +246,7 @@ class _AddLinkSheetState extends ConsumerState<_AddLinkSheet> {
       return;
     }
 
-    final stream = ref.read(downloadManagerProvider).prefetchMetadata(magnet);
+    final stream = _downloads.prefetchMetadata(magnet);
     _prefetchSub = stream.listen((preview) {
       if (!mounted) return;
       setState(() {
@@ -254,7 +263,7 @@ class _AddLinkSheetState extends ConsumerState<_AddLinkSheet> {
     final prefetchId = _prefetchId;
     if (prefetchId == null || _preview?.canStartDownload != true) return;
 
-    final ok = await ref.read(downloadManagerProvider).commitPrefetchedDownload(
+    final ok = await _downloads.commitPrefetchedDownload(
           prefetchId,
         );
     if (!mounted) return;

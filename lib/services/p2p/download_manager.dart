@@ -45,6 +45,18 @@ final downloadManagerProvider = Provider<DownloadManager>((ref) {
   return manager;
 });
 
+class MagnetAddResult {
+  const MagnetAddResult({
+    required this.ok,
+    this.id,
+    this.continuingExisting = false,
+  });
+
+  final bool ok;
+  final String? id;
+  final bool continuingExisting;
+}
+
 class DownloadManager {
   DownloadManager({
     required P2pEngine engine,
@@ -161,10 +173,8 @@ class DownloadManager {
         },
         onMetadataReceived: (torrentId) {
           final appId = _engine.appIdForTorrent(torrentId);
-          if (appId != null) {
-            _metadataReceivedAt[appId] = DateTime.now();
-          }
-          AppLog.p2p('metadataReceived', torrentId: appId ?? '$torrentId');
+          if (appId == null) return;
+          unawaited(_onMetadataReady(appId));
         },
         onSaveResumeData: (torrentId, bytes) {
           unawaited(_onSaveResumeData(torrentId, bytes));
@@ -251,7 +261,142 @@ class DownloadManager {
     return _connectivity.checkIsOnWifi();
   }
 
-  Future<bool> addMagnet(
+  String? _infoHashFor(String magnetOrHash) {
+    return _persistence?.infoHashFor(magnetOrHash) ??
+        MagnetLink.parse(sanitizeMagnetInput(magnetOrHash))?.infoHashHex;
+  }
+
+  DownloadItem? _findActiveByInfoHash(String hash) {
+    for (final item in _items) {
+      if (_infoHashFor(item.magnetOrHash) != hash) continue;
+      switch (item.status) {
+        case DownloadStatus.completed:
+        case DownloadStatus.cancelled:
+          continue;
+        default:
+          return item;
+      }
+    }
+    return null;
+  }
+
+  Future<List<String>> _collectTrackersForDownload(String id) async {
+    final perDownload = await _trackerManager.getPerDownloadTrackers(id);
+    String? magnet;
+    final item = _find(id);
+    if (item != null) {
+      magnet = item.magnetOrHash;
+    } else if (_activePrefetchId == id) {
+      magnet = _activePrefetchMagnet;
+    }
+    final parsed =
+        magnet != null ? MagnetLink.parse(sanitizeMagnetInput(magnet)) : null;
+    return PeerBootstrap.collectTrackers(
+      embeddedCount: parsed?.trackers.length ?? 0,
+      globalTrackers: _trackerManager.trackers,
+      perDownloadTrackers: perDownload,
+    );
+  }
+
+  Future<void> _injectTrackersAfterMetadata(String appId) async {
+    final trackers = await _collectTrackersForDownload(appId);
+    if (trackers.isEmpty) return;
+    await _engine.injectTrackers(appId, trackers);
+  }
+
+  void _emitPrefetchMetadataReady(
+    String appId,
+    String? displayName,
+    double progress, {
+    bool alreadyComplete = false,
+  }) {
+    final controller = _prefetchStreams[appId];
+    if (controller == null || controller.isClosed) return;
+
+    final prior = _prefetchLatest[appId];
+    final complete = alreadyComplete || progress >= 0.99;
+    final preview = MagnetMetadataPreview(
+      prefetchId: appId,
+      hasMetadata: true,
+      isLoading: false,
+      isCompleted: complete,
+      progress: progress,
+      displayName: displayName ?? prior?.displayName,
+      phaseLabel: complete ? 'Already complete' : 'Metadata ready',
+      seeders: prior?.seeders ?? 0,
+      leechers: prior?.leechers ?? 0,
+    );
+    _prefetchLatest[appId] = preview;
+    controller.add(preview);
+  }
+
+  Future<void> _onMetadataReady(String appId, {String? displayName}) async {
+    final progress = _engine.getProgressForAppId(appId);
+    _metadataReceivedAt[appId] = DateTime.now();
+    AppLog.task(
+      'metadataReady',
+      id: appId,
+      detail: 'progress=${progress.toStringAsFixed(3)}',
+    );
+    AppLog.p2p('metadataReceived', torrentId: appId);
+
+    if (_prefetchIds.contains(appId)) {
+      _emitPrefetchMetadataReady(appId, displayName, progress);
+    }
+
+    await _injectTrackersAfterMetadata(appId);
+
+    if (!_awaitingPieceDownload.contains(appId)) return;
+
+    if (progress >= 0.99) {
+      _awaitingPieceDownload.remove(appId);
+      if (_prefetchIds.contains(appId)) {
+        _emitPrefetchMetadataReady(
+          appId,
+          displayName,
+          progress,
+          alreadyComplete: true,
+        );
+      }
+      final item = _find(appId);
+      if (item != null && !_prefetchIds.contains(appId)) {
+        _update(
+          appId,
+          item.copyWith(
+            status: DownloadStatus.completed,
+            progress: 1,
+            completedAt: DateTime.now(),
+            phaseLabel: 'Complete',
+            displayName: displayName ?? item.displayName,
+          ),
+        );
+      }
+      return;
+    }
+
+    _awaitingPieceDownload.remove(appId);
+    final item = _find(appId);
+    if (item != null && !_prefetchIds.contains(appId)) {
+      unawaited(
+        _startPieceDownloadAfterMetadata(
+          appId,
+          item,
+          P2pProgressEvent(
+            id: appId,
+            progress: progress,
+            downloadBps: 0,
+            uploadBps: 0,
+            numSeeds: 0,
+            numPeers: 0,
+            hasMetadata: true,
+            displayName: displayName,
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<MagnetAddResult> addMagnet(
     String magnet, {
     String? displayName,
     String? sourceName,
@@ -269,26 +414,49 @@ class DownloadManager {
       throw ArgumentError('Invalid magnet link — could not read infohash');
     }
 
+    final infoHash = parsed.infoHashHex;
+    final existing = _findActiveByInfoHash(infoHash);
+    if (existing != null) {
+      AppLog.task('addMagnet', id: existing.id, phase: 'dedupe');
+      if (existing.status == DownloadStatus.paused ||
+          existing.status == DownloadStatus.failed ||
+          !_engine.hasHandle(existing.id)) {
+        await resume(existing.id);
+      }
+      return MagnetAddResult(
+        ok: true,
+        id: existing.id,
+        continuingExisting: true,
+      );
+    }
+
     final id = _uuid.v4();
     final perDownload = extraTrackers ?? await _trackerManager.getPerDownloadTrackers(id);
-    final enhancedMagnet = PeerBootstrap.prepareMagnet(
-      parsed.toUri(maxTrackers: parsed.trackers.length.clamp(0, 20)),
-      globalTrackers: _trackerManager.trackers,
-      perDownloadTrackers: perDownload,
-    );
+    final metadataMagnet =
+        parsed.toUri(maxTrackers: parsed.trackers.length.clamp(0, 20));
+    final resumeData = await _persistence?.readResume(metadataMagnet);
+    final hasPartial = resumeData != null && resumeData.isNotEmpty;
+    final useMetadataFirst = metadataFirst && !hasPartial;
+    final magnetForAdd = useMetadataFirst
+        ? metadataMagnet
+        : PeerBootstrap.prepareMagnet(
+            metadataMagnet,
+            globalTrackers: _trackerManager.trackers,
+            perDownloadTrackers: perDownload,
+          );
 
     AppLog.task(
       'addMagnet',
       id: id,
       phase: 'start',
-      detail: 'infohash=${parsed.infoHashHex.substring(0, 8)}…',
+      detail: 'infohash=${infoHash.substring(0, 8)}…',
     );
 
     final canStart = await _canDownloadNow();
     final item = DownloadItem(
       id: id,
       displayName: displayName ?? parsed.displayName ?? 'Download',
-      magnetOrHash: enhancedMagnet,
+      magnetOrHash: magnetForAdd,
       status: canStart ? DownloadStatus.queued : DownloadStatus.paused,
       sourceName: sourceName,
       seeders: seeders,
@@ -297,40 +465,41 @@ class DownloadManager {
       trackers: perDownload,
       waitingForWifi: !canStart,
       errorMessage: canStart ? null : 'Waiting for Wi-Fi',
-      phaseLabel: metadataFirst && canStart ? kDownloadingMetadataLabel : null,
+      phaseLabel: useMetadataFirst && canStart ? kDownloadingMetadataLabel : null,
     );
     _items.insert(0, item);
     _emit();
 
-    if (!canStart) return true;
+    if (!canStart) {
+      return MagnetAddResult(ok: true, id: id);
+    }
 
     try {
       await _resolveAndPrepareDownloadDir();
-      final resume = await _persistence?.readResume(enhancedMagnet);
       _metadataGeneration[id] = (_metadataGeneration[id] ?? 0) + 1;
       await _engine.addMagnet(
-        enhancedMagnet,
+        magnetForAdd,
         id: id,
-        metadataOnly: metadataFirst,
-        resumeData: resume,
+        metadataOnly: useMetadataFirst,
+        resumeData: hasPartial ? resumeData : null,
       );
       _bootstrapStarted[id] = DateTime.now();
       _staleRefreshAttempted.remove(id);
-      if (metadataFirst) {
+      if (useMetadataFirst) {
         _awaitingPieceDownload.add(id);
       }
       _update(
         id,
         item.copyWith(
           status: DownloadStatus.downloading,
-          phaseLabel: metadataFirst
+          phaseLabel: useMetadataFirst
               ? kDownloadingMetadataLabel
               : parsed.hasTrackers
                   ? 'Contacting trackers…'
                   : 'Searching DHT for peers…',
         ),
       );
-      return true;
+      return MagnetAddResult(ok: true, id: id);
     } catch (e, st) {
       AppLog.error('DownloadManager', 'addMagnet failed', e, st);
       final message = e is StateError
@@ -343,7 +512,7 @@ class DownloadManager {
           errorMessage: message,
         ),
       );
-      return false;
+      return MagnetAddResult(ok: false, id: id);
     }
   }
 
@@ -400,18 +569,43 @@ class DownloadManager {
       return;
     }
 
+    final infoHash = parsed.infoHashHex;
+    final existing = _findActiveByInfoHash(infoHash);
+    if (existing != null) {
+      _activePrefetchId = existing.id;
+      _activePrefetchMagnet = sanitized;
+      final hasMeta = _metadataReceivedAt.containsKey(existing.id) ||
+          _engine.hasMetadataForAppId(existing.id);
+      final progress = _engine.getProgressForAppId(existing.id);
+      if (!controller.isClosed) {
+        controller.add(
+          MagnetMetadataPreview(
+            prefetchId: existing.id,
+            hasMetadata: hasMeta,
+            isLoading: !hasMeta,
+            isCompleted: progress >= 0.99,
+            progress: progress,
+            displayName: existing.displayName,
+            phaseLabel: hasMeta
+                ? (progress >= 0.99 ? 'Already complete' : 'Metadata ready')
+                : kDownloadingMetadataLabel,
+            seeders: existing.seeders,
+            leechers: existing.leechers,
+            continuingExisting: true,
+          ),
+        );
+      }
+      return;
+    }
+
     final prefetchId = _uuid.v4();
     _activePrefetchId = prefetchId;
     _activePrefetchMagnet = sanitized;
     _prefetchIds.add(prefetchId);
     _prefetchStreams[prefetchId] = controller;
 
-    final perDownload = await _trackerManager.getPerDownloadTrackers(prefetchId);
-    final enhancedMagnet = PeerBootstrap.prepareMagnet(
-      parsed.toUri(maxTrackers: parsed.trackers.length.clamp(0, 20)),
-      globalTrackers: _trackerManager.trackers,
-      perDownloadTrackers: perDownload,
-    );
+    final metadataMagnet =
+        parsed.toUri(maxTrackers: parsed.trackers.length.clamp(0, 20));
 
     if (!controller.isClosed) {
       controller.add(
@@ -426,10 +620,12 @@ class DownloadManager {
 
     try {
       await _resolveAndPrepareDownloadDir();
+      final resume = await _persistence?.readResume(metadataMagnet);
       await _engine.addMagnet(
-        enhancedMagnet,
+        metadataMagnet,
         id: prefetchId,
         metadataOnly: true,
+        resumeData: resume,
       );
     } catch (e, st) {
       AppLog.error('DownloadManager', 'prefetchMetadata failed', e, st);
@@ -447,9 +643,12 @@ class DownloadManager {
     }
   }
 
-  Future<void> cancelMetadataPrefetch(String prefetchId) async {
+  Future<void> cancelMetadataPrefetch(
+    String prefetchId, {
+    bool deleteFiles = true,
+  }) async {
     if (!_prefetchIds.contains(prefetchId)) return;
-    await _engine.remove(prefetchId, deleteFiles: true);
+    await _engine.remove(prefetchId, deleteFiles: deleteFiles);
     _clearPrefetch(prefetchId);
   }
 
@@ -466,7 +665,6 @@ class DownloadManager {
 
   Future<bool> commitPrefetchedDownload(String prefetchId) async {
     await _ready;
-    if (!_prefetchIds.contains(prefetchId)) return false;
 
     final magnet = _activePrefetchMagnet;
     if (magnet == null) return false;
@@ -475,19 +673,80 @@ class DownloadManager {
     final parsed = MagnetLink.parse(sanitized);
     if (parsed == null) return false;
 
+    final existingItem = _find(prefetchId);
+    final isExistingDownload =
+        existingItem != null && !_prefetchIds.contains(prefetchId);
+
+    if (isExistingDownload) {
+      final progress = _engine.getProgressForAppId(prefetchId);
+      if (progress >= 0.99) {
+        _update(
+          prefetchId,
+          existingItem.copyWith(
+            status: DownloadStatus.completed,
+            progress: 1,
+            completedAt: DateTime.now(),
+            phaseLabel: 'Complete',
+          ),
+        );
+        return true;
+      }
+      if (!_awaitingPieceDownload.contains(prefetchId) &&
+          _engine.hasHandle(prefetchId)) {
+        await _injectTrackersAfterMetadata(prefetchId);
+        await _engine.beginPieceDownload(prefetchId);
+      } else {
+        await resume(prefetchId);
+      }
+      return true;
+    }
+
+    if (!_prefetchIds.contains(prefetchId)) return false;
+
     final perDownload = await _trackerManager.getPerDownloadTrackers(prefetchId);
-    final enhancedMagnet = PeerBootstrap.prepareMagnet(
-      parsed.toUri(maxTrackers: parsed.trackers.length.clamp(0, 20)),
-      globalTrackers: _trackerManager.trackers,
-      perDownloadTrackers: perDownload,
-    );
+    final metadataMagnet =
+        parsed.toUri(maxTrackers: parsed.trackers.length.clamp(0, 20));
 
     final canStart = await _canDownloadNow();
-    final preview = _prefetchLatest.remove(prefetchId);
+    final preview = _prefetchLatest[prefetchId];
+    final progress = _engine.getProgressForAppId(prefetchId);
+
+    if (progress >= 0.99) {
+      final item = DownloadItem(
+        id: prefetchId,
+        displayName: preview?.displayName ?? parsed.displayName ?? 'Download',
+        magnetOrHash: metadataMagnet,
+        status: DownloadStatus.completed,
+        progress: 1,
+        createdAt: DateTime.now(),
+        completedAt: DateTime.now(),
+        trackers: perDownload,
+        phaseLabel: 'Complete',
+        seeders: preview?.seeders ?? 0,
+        leechers: preview?.leechers ?? 0,
+        savePath: _engine.downloadDir,
+      );
+      _prefetchIds.remove(prefetchId);
+      _prefetchLatest.remove(prefetchId);
+      final stream = _prefetchStreams.remove(prefetchId);
+      unawaited(stream?.close());
+      if (_activePrefetchId == prefetchId) {
+        _activePrefetchId = null;
+        _activePrefetchMagnet = null;
+      }
+      _awaitingPieceDownload.remove(prefetchId);
+      _items.insert(0, item);
+      _emit();
+      if (item.savePath != null) {
+        unawaited(_scanner.scanDirectory(item.savePath!).catchError((_, __) => 0));
+      }
+      return true;
+    }
+
     final item = DownloadItem(
       id: prefetchId,
       displayName: preview?.displayName ?? parsed.displayName ?? 'Download',
-      magnetOrHash: enhancedMagnet,
+      magnetOrHash: metadataMagnet,
       status: canStart ? DownloadStatus.downloading : DownloadStatus.paused,
       createdAt: DateTime.now(),
       trackers: perDownload,
@@ -513,9 +772,11 @@ class DownloadManager {
     if (!canStart) return true;
 
     try {
+      await _injectTrackersAfterMetadata(prefetchId);
       await _engine.beginPieceDownload(prefetchId);
       _bootstrapStarted[prefetchId] = DateTime.now();
       _staleRefreshAttempted.remove(prefetchId);
+      _awaitingPieceDownload.remove(prefetchId);
       return true;
     } catch (e, st) {
       AppLog.error('DownloadManager', 'commitPrefetchedDownload failed', e, st);
@@ -548,12 +809,18 @@ class DownloadManager {
 
     final preview = MagnetMetadataPreview(
       prefetchId: event.id,
-      hasMetadata: event.hasMetadata,
+      hasMetadata: event.hasMetadata ||
+          (event.isCompleted && event.progress < 0.99) ||
+          (event.isCompleted && event.progress >= 0.99),
       displayName: event.displayName,
-      phaseLabel: event.phaseLabel ?? kDownloadingMetadataLabel,
+      phaseLabel: event.isCompleted && event.progress >= 0.99
+          ? 'Already complete'
+          : (event.hasMetadata ? 'Metadata ready' : event.phaseLabel ?? kDownloadingMetadataLabel),
       seeders: event.numSeeds,
       leechers: event.numPeers,
-      isLoading: !event.hasMetadata,
+      isLoading: !event.hasMetadata && !(event.isCompleted && event.progress >= 0.99),
+      isCompleted: event.isCompleted && event.progress >= 0.99,
+      progress: event.progress,
     );
     _prefetchLatest[event.id] = preview;
     controller.add(preview);
@@ -884,7 +1151,11 @@ class DownloadManager {
       }
 
       var status = item.status;
-      if (event.isCompleted) {
+      final deferComplete = (_awaitingPieceDownload.contains(event.id) ||
+              _prefetchIds.contains(event.id)) &&
+          event.progress < 0.99;
+
+      if (event.isCompleted && !deferComplete) {
         status = DownloadStatus.completed;
       } else if (item.status == DownloadStatus.queued ||
           item.status == DownloadStatus.paused) {
@@ -903,7 +1174,7 @@ class DownloadManager {
         errorMessage: null,
       );
 
-      if (event.isCompleted) {
+      if (event.isCompleted && !deferComplete) {
         updated = updated.copyWith(
           status: DownloadStatus.completed,
           progress: 1,
@@ -920,11 +1191,17 @@ class DownloadManager {
         }
         _bootstrapStarted.remove(event.id);
         _staleRefreshAttempted.remove(event.id);
+        _awaitingPieceDownload.remove(event.id);
       } else {
         if (_awaitingPieceDownload.contains(event.id) && event.hasMetadata) {
-          _awaitingPieceDownload.remove(event.id);
-          _metadataReceivedAt[event.id] = DateTime.now();
-          unawaited(_startPieceDownloadAfterMetadata(event.id, updated, event));
+          if (!_metadataReceivedAt.containsKey(event.id)) {
+            unawaited(
+              _onMetadataReady(
+                event.id,
+                displayName: event.displayName,
+              ),
+            );
+          }
         } else if (event.hasMetadata &&
             !_metadataReceivedAt.containsKey(event.id)) {
           _metadataReceivedAt[event.id] = DateTime.now();

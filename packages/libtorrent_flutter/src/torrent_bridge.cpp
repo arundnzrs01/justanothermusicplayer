@@ -2106,7 +2106,8 @@ TORRENT_API lt_torrent_id lt_add_magnet(lt_session_t session,
         // to wait for DHT bootstrap (which can take 30-60s on a cold start).
         // These are the same trackers shipped by qBittorrent's default
         // "automatically add" list and TorrServer.
-        if (atp.trackers.empty()) {
+        // Metadata-only (stream_only): embedded tr= + DHT only — no default trackers.
+        if (atp.trackers.empty() && !stream_only) {
             static const char* kDefaultTrackers[] = {
                 "udp://tracker.opentrackr.org:1337/announce",
                 "udp://open.demonii.com:1337/announce",
@@ -2201,6 +2202,65 @@ TORRENT_API void lt_resume_torrent(lt_session_t session, lt_torrent_id id) {
     auto it = sw->handles.find(id);
     if (it != sw->handles.end() && it->second.is_valid())
         try { it->second.resume(); } catch (...) {}
+}
+
+TORRENT_API void lt_add_trackers(lt_session_t session, lt_torrent_id id,
+                                   const char** urls, int count) {
+    if (!session || !urls || count <= 0) return;
+    auto* sw = to_sw(session);
+    lt::torrent_handle h;
+    {
+        std::lock_guard<std::mutex> lk(sw->mu);
+        auto it = sw->handles.find(id);
+        if (it == sw->handles.end() || !it->second.is_valid()) return;
+        h = it->second;
+    }
+    try {
+        for (int i = 0; i < count; i++) {
+            if (urls[i] && urls[i][0]) h.add_tracker(lt::announce_entry(urls[i]));
+        }
+    } catch (...) {}
+}
+
+TORRENT_API void lt_force_reannounce(lt_session_t session, lt_torrent_id id) {
+    if (!session) return;
+    auto* sw = to_sw(session);
+    std::lock_guard<std::mutex> lk(sw->mu);
+    auto it = sw->handles.find(id);
+    if (it == sw->handles.end() || !it->second.is_valid()) return;
+    try {
+        it->second.force_reannounce();
+    } catch (...) {
+        try {
+            it->second.pause();
+            it->second.resume();
+        } catch (...) {}
+    }
+}
+
+TORRENT_API int lt_begin_piece_download(lt_session_t session, lt_torrent_id id) {
+    if (!session) return 0;
+    auto* sw = to_sw(session);
+    lt::torrent_handle h;
+    {
+        std::lock_guard<std::mutex> lk(sw->mu);
+        auto it = sw->handles.find(id);
+        if (it == sw->handles.end() || !it->second.is_valid()) return 0;
+        h = it->second;
+        sw->ephemeral_torrents.erase(id);
+    }
+    try {
+        h.unset_flags(lt::torrent_flags::stop_when_ready);
+        auto ti = h.torrent_file();
+        if (ti) {
+            int nf = ti->num_files();
+            std::vector<lt::download_priority_t> prios(
+                (size_t)nf, lt::default_priority);
+            h.prioritize_files(prios);
+        }
+        h.resume();
+        return 1;
+    } catch (...) { return 0; }
 }
 
 TORRENT_API void lt_recheck_torrent(lt_session_t session, lt_torrent_id id) {
@@ -2711,7 +2771,7 @@ TORRENT_API lt_torrent_id lt_add_magnet_with_resume(
         atp.save_path = path;
         atp.flags &= ~lt::torrent_flags::paused;
         atp.flags &= ~lt::torrent_flags::auto_managed;
-        if (atp.trackers.empty()) {
+        if (atp.trackers.empty() && !stream_only) {
             static const char* kDefaultTrackers[] = {
                 "udp://tracker.opentrackr.org:1337/announce",
                 "udp://open.demonii.com:1337/announce",

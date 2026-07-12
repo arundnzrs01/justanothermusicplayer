@@ -80,8 +80,13 @@ class DownloadDirectoryService {
       final testFile = File('${dir.path}/.jamp_write_test');
       await testFile.writeAsString('ok', flush: true);
       final contents = await testFile.readAsString();
-      await testFile.delete();
-      return contents == 'ok';
+      if (contents != 'ok') return false;
+      try {
+        await testFile.delete();
+      } catch (_) {
+        // Scoped storage on Android may block delete while write+read succeeded.
+      }
+      return true;
     } catch (e, st) {
       debugPrint('canWriteTo failed for $dirPath: $e\n$st');
       return false;

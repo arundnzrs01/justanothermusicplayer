@@ -238,6 +238,9 @@ class LibtorrentFlutter {
   /// Whether resume/session FFI is available in the native library.
   bool get hasExtendedApi => _b.hasExtendedApi;
 
+  /// Whether post-metadata tracker/piece FFI is available.
+  bool get hasPostMetadataApi => _b.hasPostMetadataApi;
+
   /// libtorrent version string.
   String get libraryVersion => _b.version().toDartString();
 
@@ -284,6 +287,30 @@ class LibtorrentFlutter {
 
   /// Resume a paused torrent.
   void resumeTorrent(int id) => _b.resumeTorrent(_session, id);
+
+  /// Add announce URLs to an existing torrent.
+  void addTrackers(int id, List<String> urls) {
+    if (urls.isEmpty) return;
+    final ptrs = calloc<Pointer<Utf8>>(urls.length);
+    try {
+      for (var i = 0; i < urls.length; i++) {
+        ptrs[i] = urls[i].toNativeUtf8();
+      }
+      _b.addTrackers(_session, id, ptrs, urls.length);
+    } finally {
+      for (var i = 0; i < urls.length; i++) {
+        if (ptrs[i] != nullptr) malloc.free(ptrs[i]);
+      }
+      calloc.free(ptrs);
+    }
+  }
+
+  /// Force tracker reannounce for [torrentId].
+  void forceReannounce(int id) => _b.forceReannounce(_session, id);
+
+  /// Transition metadata-only torrent to piece download on the same handle.
+  bool beginPieceDownloadNative(int id) =>
+      _b.beginPieceDownload(_session, id) != 0;
 
   /// Recheck torrent integrity.
   void recheckTorrent(int id) => _b.recheckTorrent(_session, id);
